@@ -1,5 +1,5 @@
 [package]
-name = "lb"
+name = "load-balancer-llamaedge"
 version = "0.1.0"
 edition = "2024"
 
