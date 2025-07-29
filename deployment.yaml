@@ -281,6 +281,15 @@ spec:
           env:
             - name: SERVICES
               value: "llama-low-cost-service,3;llama-high-cost-service,1"
+            # Add the missing environment variables
+            - name: LLAMA_LOW_COST_SERVICE_HOST
+              value: "llama-low-cost-service"
+            - name: LLAMA_LOW_COST_SERVICE_PORT
+              value: "8080"
+            - name: LLAMA_HIGH_COST_SERVICE_HOST
+              value: "llama-high-cost-service"
+            - name: LLAMA_HIGH_COST_SERVICE_PORT
+              value: "8080"
           ports:
             - containerPort: 8080
 

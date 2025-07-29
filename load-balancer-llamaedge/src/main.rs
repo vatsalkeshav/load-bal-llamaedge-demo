@@ -1,8 +1,8 @@
+use rand::Rng;
 use std::env;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use rand::Rng;
-use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 struct Service {
@@ -23,7 +23,9 @@ fn select_service(services: &[Service]) -> &str {
     &services[0].name // Fallback
 }
 
-async fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
+async fn read_http_request(
+    stream: &mut TcpStream,
+) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
     let mut buffer = Vec::new();
     let mut temp_buf = [0; 1024];
     loop {
@@ -38,12 +40,15 @@ async fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), 
     }
 
     let request_str = String::from_utf8_lossy(&buffer);
-    let (headers, _) = request_str.split_once("\r\n\r\n").ok_or("Invalid request")?;
+    let (headers, _) = request_str
+        .split_once("\r\n\r\n")
+        .ok_or("Invalid request")?;
     let headers = headers.to_string();
     let body_start = headers.len() + 4;
     let body = &buffer[body_start..];
 
-    let content_length = headers.lines()
+    let content_length = headers
+        .lines()
         .find(|line| line.to_lowercase().starts_with("content-length:"))
         .and_then(|line| line.split(':').nth(1))
         .and_then(|s| s.trim().parse::<usize>().ok())
@@ -61,7 +66,10 @@ async fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), 
     Ok((headers, full_body))
 }
 
-async fn handle_client(mut stream: TcpStream, services: Arc<Vec<Service>>) -> Result<(), Box<dyn std::error::Error>> {
+async fn handle_client(
+    mut stream: TcpStream,
+    services: Arc<Vec<Service>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (headers, body) = read_http_request(&mut stream).await?;
 
     let request_line = headers.lines().next().unwrap_or("");
@@ -73,27 +81,51 @@ async fn handle_client(mut stream: TcpStream, services: Arc<Vec<Service>>) -> Re
     }
 
     let service_name = select_service(&services);
-    let service_host = env::var(format!("{}_SERVICE_HOST", service_name.to_uppercase().replace("-", "_")))?;
-    let service_port = env::var(format!("{}_SERVICE_PORT", service_name.to_uppercase().replace("-", "_")))?;
-    let address = format!("{}:{}", service_host, service_port);
+    println!("Selected service: {}", service_name);
+
+    // Hardcode service paths based on the selected service
+    let address = match service_name {
+        "llama-low-cost-service" => {
+            let host = env::var("LLAMA_LOW_COST_SERVICE_SERVICE_HOST")
+                .expect("LLAMA_LOW_COST_SERVICE_SERVICE_HOST not set");
+            let port =
+                env::var("LLAMA_LOW_COST_SERVICE_SERVICE_PORT").unwrap_or("8080".to_string());
+            format!("{}:{}", host, port)
+        }
+        "llama-high-cost-service" => {
+            let host = env::var("LLAMA_HIGH_COST_SERVICE_SERVICE_HOST")
+                .expect("LLAMA_HIGH_COST_SERVICE_SERVICE_HOST not set");
+            let port =
+                env::var("LLAMA_HIGH_COST_SERVICE_SERVICE_PORT").unwrap_or("8080".to_string());
+            format!("{}:{}", host, port)
+        }
+        _ => {
+            return Err(format!("Unknown service: {}", service_name).into());
+        }
+    };
+
+    println!("Connecting to: {}", address);
 
     let mut backend_stream = TcpStream::connect(&address).await?;
 
+    // Forward the complete HTTP request
     backend_stream.write_all(headers.as_bytes()).await?;
     backend_stream.write_all(b"\r\n\r\n").await?;
     backend_stream.write_all(&body).await?;
 
-    let mut response_buffer = Vec::new();
-    backend_stream.read_to_end(&mut response_buffer).await?;
-
-    stream.write_all(&response_buffer).await?;
+    // Stream the response back instead of reading everything into memory
+    tokio::io::copy(&mut backend_stream, &mut stream).await?;
 
     Ok(())
 }
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let services_str = env::var("SERVICES").expect("SERVICES env var must be set (e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')");
-    let services: Vec<Service> = services_str.split(';')
+    let services_str = env::var("SERVICES").expect(
+        "SERVICES env var must be set (e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')",
+    );
+    let services: Vec<Service> = services_str
+        .split(';')
         .map(|s| {
             let parts: Vec<&str> = s.split(',').collect();
             Service {
@@ -104,7 +136,11 @@ async fn main() {
         .collect();
     let services = Arc::new(services);
 
-    let listener = TcpListener::bind("0.0.0.0:8080").await.expect("Failed to bind to address");
+    println!("Services configured: {:?}", services);
+
+    let listener = TcpListener::bind("0.0.0.0:8080")
+        .await
+        .expect("Failed to bind to address");
     println!("Load balancer running on port 8080...");
 
     loop {
