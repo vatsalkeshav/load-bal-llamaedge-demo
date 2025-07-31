@@ -20,26 +20,42 @@ fn select_service(services: &[Service]) -> &str {
         }
         choice -= service.weight;
     }
-    &services[0].name
+    &services[0].name // fallback - if the weights are not specified, empty list etc - should be validated first :D
 }
 
 async fn read_http_request(
     stream: &mut TcpStream,
 ) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
+    // client's address - peer address - here for logging graceful connection closing from client side
+    let peer_addr = stream
+        .peer_addr()
+        .map_or_else(|_| "unknown".to_string(), |addr| addr.to_string());
+    println!("handling connection from peer address : {}", peer_addr);
+
+    // to store (as bytes) the input to be echoed
+    // let mut buffer = [0; 1024];
     let mut buffer = Vec::new();
     let mut temp_buf = [0; 1024];
 
     loop {
-        let bytes_read = stream.read(&mut temp_buf).await?;
-        if bytes_read == 0 {
-            return Err("Connection closed".into());
+        let number_of_read_bytes = stream.read(&mut temp_buf).await?;
+        // sanity check
+        if number_of_read_bytes == 0 {
+            println!(
+                "client {} closed the connection gracefully - zero bytes read : EOF",
+                peer_addr
+            );
+            break;
         }
-        buffer.extend_from_slice(&temp_buf[..bytes_read]);
+
+        buffer.extend_from_slice(&temp_buf[..number_of_read_bytes]);
+        // break loop - if found end of header
         if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
             break;
         }
     }
 
+    // start -- separate headers and body from http request
     let request_str = String::from_utf8_lossy(&buffer);
     let (headers, _) = request_str
         .split_once("\r\n\r\n")
@@ -47,6 +63,7 @@ async fn read_http_request(
     let headers = headers.to_string();
     let body_start = headers.len() + 4;
     let body = &buffer[body_start..];
+    // end -- separate headers and body from http request
 
     let content_length = headers
         .lines()
@@ -57,11 +74,16 @@ async fn read_http_request(
 
     let mut full_body = body.to_vec();
     while full_body.len() < content_length {
-        let bytes_read = stream.read(&mut temp_buf).await?;
-        if bytes_read == 0 {
-            return Err("Connection closed before receiving full body".into());
+        let number_of_read_bytes = stream.read(&mut temp_buf).await?;
+        // sanity check
+        if number_of_read_bytes == 0 {
+            println!(
+                "client {} closed the connection gracefully - zero bytes read : EOF",
+                peer_addr
+            );
+            break;
         }
-        full_body.extend_from_slice(&temp_buf[..bytes_read]);
+        full_body.extend_from_slice(&temp_buf[..number_of_read_bytes]);
     }
 
     Ok((headers, full_body))
@@ -71,8 +93,18 @@ async fn handle_client(
     mut stream: TcpStream,
     services: Arc<Vec<Service>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // client's address - peer address - here for logging purposes only
+    let peer_addr = stream
+        .peer_addr()
+        .map_or_else(|_| "unknown".to_string(), |addr| addr.to_string());
+    println!("handling connection from peer address : {}", peer_addr);
+
+    // read the http request to a tuple
     let (headers, body) = read_http_request(&mut stream).await?;
 
+    // validate the request :
+    //  - Reject if path is not /v1/chat/completions
+    //  - Reject if not a POST request.
     let request_line = headers.lines().next().unwrap_or("");
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() != 3 || parts[0] != "POST" || parts[1] != "/v1/chat/completions" {
@@ -81,8 +113,12 @@ async fn handle_client(
         return Ok(());
     }
 
+    // select the service as per 3:1 load-balancing
     let service_name = select_service(&services);
-    println!("Selected service: {}", service_name);
+    println!(
+        "Selected service {} to serve client {}",
+        service_name, peer_addr
+    );
 
     let address = match service_name {
         "llama-low-cost-service" => {
@@ -90,6 +126,7 @@ async fn handle_client(
                 .expect("LLAMA_LOW_COST_SERVICE_SERVICE_HOST not set");
             let port =
                 env::var("LLAMA_LOW_COST_SERVICE_SERVICE_PORT").unwrap_or("8080".to_string());
+            // concatenate the host and port
             format!("{}:{}", host, port)
         }
         "llama-high-cost-service" => {
@@ -97,21 +134,23 @@ async fn handle_client(
                 .expect("LLAMA_HIGH_COST_SERVICE_SERVICE_HOST not set");
             let port =
                 env::var("LLAMA_HIGH_COST_SERVICE_SERVICE_PORT").unwrap_or("8080".to_string());
+            // concatenate({}:{}) the host and port
             format!("{}:{}", host, port)
         }
         _ => {
-            return Err(format!("Unknown service: {}", service_name).into());
+            return Err(format!("Unknown service: {}\nPlease register it first\ndynamic service/pod reginstration coming soon", service_name).into());
         }
     };
 
-    println!("Connecting to: {}", address);
+    println!("Service selected,\nnow connecting to it at: {}", address);
 
     let mut backend_stream = TcpStream::connect(&address).await?;
 
-    backend_stream.write_all(headers.as_bytes()).await?;
-    backend_stream.write_all(b"\r\n\r\n").await?;
-    backend_stream.write_all(&body).await?;
+    backend_stream.write_all(headers.as_bytes()).await?; // writes the original headers to backend
+    backend_stream.write_all(b"\r\n\r\n").await?; // add \r\n\r\n to terminate header explicitly
+    backend_stream.write_all(&body).await?; // writes the original body to backend
 
+    //  stream backend response to client
     tokio::io::copy(&mut backend_stream, &mut stream).await?;
 
     Ok(())
@@ -119,8 +158,10 @@ async fn handle_client(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    // start -- recognize the servers exposed out there using their own services
     let services_str = env::var("SERVICES").expect(
-        "maybe SERVICES env var is not set (e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')",
+        "maybe the SERVICES env var is not set \n
+        (e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')",
     );
 
     let services: Vec<Service> = services_str
@@ -138,13 +179,23 @@ async fn main() {
     // but `Arc` works well with `tokio::spawn`
     let services = Arc::new(services);
 
-    println!("Services configured: {:?}", services);
+    println!(
+        "Services that are currently being seen as environment variables :\n{:?}",
+        services
+    );
+    // end -- recognize the servers exposed out there using their own services
 
-    let listener = TcpListener::bind("0.0.0.0:8080")
+    // start -- tcplistener, listening loop
+    let addr = env::args()
+        .nth(1)
+        .unwrap_or_else(|| "0.0.0.0:8080".to_string());
+
+    let listener = TcpListener::bind(&addr)
         .await
         .expect("Failed to bind to address");
-    println!("Load balancer running on port 8080...");
+    println!("Server listening on address : {}", addr);
 
+    // loop to keep listening to new connections on the tcplistener address
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
@@ -160,4 +211,5 @@ async fn main() {
             }
         }
     }
+    // end -- tcplistener, listening loop
 }
