@@ -12,8 +12,8 @@ struct Service {
 
 fn select_service(services: &[Service]) -> &str {
     let total_weight: u32 = services.iter().map(|s| s.weight).sum();
-    let mut rng = rand::thread_rng();
-    let mut choice = rng.gen_range(0..total_weight);
+    let mut rng = rand::rng();
+    let mut choice = rng.random_range(0..total_weight);
     for service in services {
         if choice < service.weight {
             return &service.name;
@@ -28,6 +28,7 @@ async fn read_http_request(
 ) -> Result<(String, Vec<u8>), Box<dyn std::error::Error>> {
     let mut buffer = Vec::new();
     let mut temp_buf = [0; 1024];
+
     loop {
         let bytes_read = stream.read(&mut temp_buf).await?;
         if bytes_read == 0 {
@@ -119,8 +120,9 @@ async fn handle_client(
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let services_str = env::var("SERVICES").expect(
-        "SERVICES env var must be set (e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')",
+        "maybe SERVICES env var is not set (e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')",
     );
+
     let services: Vec<Service> = services_str
         .split(';')
         .map(|s| {
@@ -131,6 +133,9 @@ async fn main() {
             }
         })
         .collect();
+
+    // `let services = Rc::new(services);` could be used due to wasm's single threaded nature
+    // but `Arc` works well with `tokio::spawn`
     let services = Arc::new(services);
 
     println!("Services configured: {:?}", services);
