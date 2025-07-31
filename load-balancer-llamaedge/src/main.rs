@@ -20,7 +20,7 @@ fn select_service(services: &[Service]) -> &str {
         }
         choice -= service.weight;
     }
-    &services[0].name // Fallback
+    &services[0].name
 }
 
 async fn read_http_request(
@@ -83,7 +83,6 @@ async fn handle_client(
     let service_name = select_service(&services);
     println!("Selected service: {}", service_name);
 
-    // Hardcode service paths based on the selected service
     let address = match service_name {
         "llama-low-cost-service" => {
             let host = env::var("LLAMA_LOW_COST_SERVICE_SERVICE_HOST")
@@ -108,12 +107,10 @@ async fn handle_client(
 
     let mut backend_stream = TcpStream::connect(&address).await?;
 
-    // Forward the complete HTTP request
     backend_stream.write_all(headers.as_bytes()).await?;
     backend_stream.write_all(b"\r\n\r\n").await?;
     backend_stream.write_all(&body).await?;
 
-    // Stream the response back instead of reading everything into memory
     tokio::io::copy(&mut backend_stream, &mut stream).await?;
 
     Ok(())

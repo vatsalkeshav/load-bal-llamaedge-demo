@@ -96,8 +96,10 @@ kubectl apply -f deployment.yaml
 ```
 
 ### 5. Query the llama-api-server
+#### 1. Sequential test
 ```sh
-sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080
+sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080 &
+PORT_FORWARD_PID=$!
 
 # send some empty requests to save resources and time
 for i in {1..10}; do
@@ -175,4 +177,44 @@ sudo k3s kubectl logs -f $LB_POD
 # Selected service: llama-low-cost-service
 # Connecting to: 10.43.14.226:8080
 
+kill $PORT_FORWARD_PID
+
+```
+
+#### 1. Concurrency test
+```sh
+cd
+TEST_DIR="load_test_small_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$TEST_DIR"
+
+sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080 &
+PORT_FORWARD_PID=$!
+
+
+for i in {1..10}; do
+    (
+        request_start=$(date +%s.%3N)
+        echo "Request $i started at $(date +%H:%M:%S.%3N)" > "$TEST_DIR/request_${i}_log.txt"
+        
+        response=$(curl --max-time 300 -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
+            -X POST http://localhost:8080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
+            --silent --show-error 2>"$TEST_DIR/request_${i}_error.log")
+        
+        request_end=$(date +%s.%3N)
+        duration=$(echo "$request_end - $request_start" | bc -l)
+        
+        echo "$response" | head -n -2 > "$TEST_DIR/response_${i}.json"
+        
+        echo "Request $i completed at $(date +%H:%M:%S.%3N)" >> "$TEST_DIR/request_${i}_log.txt"
+        echo "Duration: ${duration}s" >> "$TEST_DIR/request_${i}_log.txt"
+        echo "$response" | tail -n 2 >> "$TEST_DIR/request_${i}_log.txt"
+    ) &
+done
+
+# check responses/logs
+cd && cd $TEST_DIR
+
+kill $PORT_FORWARD_PID
 ```

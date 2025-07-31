@@ -281,7 +281,6 @@ spec:
           env:
             - name: SERVICES
               value: "llama-low-cost-service,3;llama-high-cost-service,1"
-            # Add the missing environment variables
             - name: LLAMA_LOW_COST_SERVICE_HOST
               value: "llama-low-cost-service"
             - name: LLAMA_LOW_COST_SERVICE_PORT
