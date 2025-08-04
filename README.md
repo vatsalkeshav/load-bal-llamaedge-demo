@@ -1,8 +1,7 @@
-
 ### 1. Installing dependencies 
 ```sh
 # apt installable
-sudo apt update && sudo apt upgrade -y && sudo apt install -y llvm-14-dev liblld-14-dev software-properties-common gcc g++ asciinema containerd cmake zlib1g-dev build-essential python3 python3-dev python3-pip git clang
+sudo apt update && sudo apt upgrade -y && sudo apt install -y llvm-14-dev liblld-14-dev software-properties-common gcc g++ asciinema containerd cmake zlib1g-dev build-essential python3 python3-dev python3-pip git clang bc jq
 
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env
@@ -87,12 +86,16 @@ sudo chmod 777 models  # ensure it's readable by k3s
 cd models
 curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
 curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf
+curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
+
 ```
 
-### 5. Create the kubernetes configuration yaml
+### 5. Apply the kubernetes configuration yaml's
 
 ```sh
-kubectl apply -f deployment.yaml
+
+kubectl apply -f yaml/default-services.yaml
+kubectl apply -f yaml/load-balancer
 ```
 
 ### 5. Query the llama-api-server
@@ -104,9 +107,9 @@ PORT_FORWARD_PID=$!
 # send some empty requests to save resources and time
 for i in {1..10}; do
     echo "=== Request $i ==="
-    curl --max-time 10 -X POST http://localhost:8080/v1/chat/completions \
+    curl --max-time 60 -X POST http://localhost:8080/v1/chat/completions \
         -H 'Content-Type: application/json' \
-        -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Say just: Response $i\"}], \"model\": \"llama-3-1b\"}" \
+        -d "{\"messages\": [{\"role\": \"user\", \"content\": \"\"}], \"model\": \"llama-3-1b\"}" \
         --silent --show-error
     echo -e "\n---\n"
     sleep 0.5
@@ -217,4 +220,30 @@ done
 cd && cd $TEST_DIR
 
 kill $PORT_FORWARD_PID
+```
+
+### 3. ( _WIP :_ ) API on load-balancer for managing services handling load
+
+To register a new service
+```sh
+# 1 
+kubectl apply -f test_service.yaml
+
+# 2 ( Register the service - working on eliminating this step )
+curl -X POST http://localhost:8080/api/register \
+-H "Content-Type: application/json" \
+-d '{"name": "llama-test-service", "weight": 3}'
+
+# 3 ( restart the load-balancer deployment - working on eliminating this step )
+kubectl rollout restart deployment/load-balancer
+```
+
+To un-register it
+```sh
+curl -X DELETE http://localhost:8080/api/unregister/llama-test-service
+```
+
+To list the successfully registered services - ie. those able to handle load
+```sh
+curl http://localhost:8080/api/services
 ```
