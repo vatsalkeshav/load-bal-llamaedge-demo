@@ -36,16 +36,16 @@ impl ServiceRegistry {
             service.name, service.weight
         );
 
-        // Validate that the service has required environment variables
         if get_service_address(&service.name).is_none() {
             println!(
-                "Failed to register service '{}' - environment variables not found",
+                "Failed to register service '{}' - environment variables not found\nmaybe `kubectl rollout restart deployment/load-balancer` might help",
                 service.name
             );
             return;
         }
-
+        // acquire write lock ( blocks other writers, allows concurrent readers )
         let mut services = self.services.write().await;
+
         if let Some(existing) = services.iter_mut().find(|s| s.name == service.name) {
             println!(
                 "Found existing service '{}' with weight: {}",
@@ -65,18 +65,30 @@ impl ServiceRegistry {
         }
 
         println!("Total services registered: {}", services.len());
+        for service in services.iter() {
+            println!("  - {} ( weight : {} )", service.name, service.weight);
+        }
     }
 
     async fn unregister_service(&self, name: &str) -> bool {
+        // acquire write lock ( blocks other writers, allows concurrent readers )
         let mut services = self.services.write().await;
+
         let initial_len = services.len();
         services.retain(|s| s.name != name);
+
         let removed = services.len() < initial_len;
         if removed {
             println!("Unregistered service: {}", name);
         } else {
             println!("Failed to unregister service (not found): {}", name);
         }
+
+        println!("Total services registered: {}", services.len());
+        for service in services.iter() {
+            println!("  - {} ( weight : {} )", service.name, service.weight);
+        }
+
         removed
     }
 
@@ -116,8 +128,8 @@ fn select_service(services: &[Service]) -> Option<&Service> {
         return services.first();
     }
 
-    let mut rng = rand::thread_rng();
-    let mut choice = rng.gen_range(0..total_weight);
+    let mut rng = rand::rng();
+    let mut choice = rng.random_range(0..total_weight);
     let original_choice = choice;
 
     for service in services {
@@ -128,10 +140,14 @@ fn select_service(services: &[Service]) -> Option<&Service> {
             );
             return Some(service);
         }
-        choice -= service.weight;
+        // choice -= service.weight; // improved to :
+        choice = choice.saturating_sub(service.weight);
     }
 
-    println!("Fallback to first service: {}", services[0].name);
+    println!(
+        "A rare thing has happened and none of the services got selected\nLet's fallback to the first service: {}",
+        services[0].name
+    );
     services.first()
 }
 
@@ -143,20 +159,29 @@ async fn read_request(
     let mut temp_buf = [0; 1024];
 
     loop {
-        let bytes_read = stream.read(&mut temp_buf).await?;
-        if bytes_read == 0 {
+        let number_of_read_bytes = stream.read(&mut temp_buf).await?;
+        // sanity check
+        if number_of_read_bytes == 0 {
+            println!(
+                "client {} closed the connection gracefully - zero bytes read : EOF",
+                peer_addr
+            );
             break;
         }
-        buffer.extend_from_slice(&temp_buf[..bytes_read]);
+
+        buffer.extend_from_slice(&temp_buf[..number_of_read_bytes]);
+        // break loop - if found end of header
         if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
             break;
         }
     }
 
+    // start -- separate headers and body from http request
     let request_str = String::from_utf8_lossy(&buffer);
     let (headers, _) = request_str
         .split_once("\r\n\r\n")
         .unwrap_or((&request_str, ""));
+
     let body_start = headers.len() + 4;
     let body = if body_start < buffer.len() {
         buffer[body_start..].to_vec()
@@ -165,7 +190,7 @@ async fn read_request(
     };
 
     println!(
-        "Read request from {} - headers size: {}, body size: {}",
+        "Read request from client : {}\nheaders size: {}\nbody size: {}",
         peer_addr,
         headers.len(),
         body.len()
@@ -263,11 +288,13 @@ async fn handle_client(
     mut stream: TcpStream,
     registry: Arc<ServiceRegistry>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // client's address - peer address - here for logging purposes only
     let peer_addr = stream
         .peer_addr()
         .unwrap_or_else(|_| "unknown".parse().unwrap());
-    println!("New connection from: {}", peer_addr);
+    println!("handling connection from client : {}", peer_addr);
 
+    // read the http request to a tuple
     let (headers, body) = read_request(&mut stream, peer_addr).await?;
 
     let request_line = headers.lines().next().unwrap_or("");
@@ -373,50 +400,68 @@ async fn initialize_services_from_env(registry: Arc<ServiceRegistry>) {
                         registry.register_service(service).await;
                     } else {
                         println!(
-                            "Skipping service '{}' - environment variables not found",
+                            "Skipping service '{}' - environment variables not found\nmaybe `kubectl rollout restart deployment/load-balancer` might help",
                             name
                         );
                     }
                 } else {
-                    println!("Invalid weight for service '{}': {}", name, parts[1]);
+                    println!(
+                        "Invalid weight for service '{}': {}\nweight must be a whole number",
+                        name, parts[1]
+                    );
                 }
             } else {
-                println!("Invalid service definition: {}", service_def);
+                println!(
+                    "Invalid service definition: {}\n(e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')",
+                    service_def
+                );
             }
         }
     } else {
-        println!("No SERVICES environment variable found");
+        println!(
+            "maybe the SERVICES env var is not set\n(e.g., 'llama-low-cost-service,3;llama-high-cost-service,1')\nmaybe `kubectl rollout restart deployment/load-balancer` might help"
+        );
     }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    println!("Starting load balancer...");
-
+    println!("Initializing load-balancer");
+    // `let registry = Arc::new(ServiceRegistry::new())` could be used due to wasm's single threaded nature
+    // but `Arc` works well with `tokio::spawn`
     let registry = Arc::new(ServiceRegistry::new());
     initialize_services_from_env(registry.clone()).await;
 
+    // start -- tcplistener, listening loop
     let addr = env::args()
         .nth(1)
         .unwrap_or_else(|| "0.0.0.0:8080".to_string());
-    let listener = TcpListener::bind(&addr).await.expect("Failed to bind");
+
+    let listener = TcpListener::bind(&addr)
+        .await
+        .expect(&format!("Failed to bind to address: {}", &addr));
 
     println!("Load balancer listening on: {}", addr);
 
+    // loop to keep listening to new connections on the tcplistener address
     loop {
         match listener.accept().await {
+            // rust's destructuring assignment :
+            // stream: The TcpStream
+            // peer_addr: The SocketAddr
             Ok((stream, peer_addr)) => {
                 println!("Accepted connection from: {}", peer_addr);
                 let registry_clone = registry.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(stream, registry_clone).await {
-                        println!("Error handling client {}: {}", peer_addr, e);
+                        println!("Error handling client : {}\nerror: {}", peer_addr, e);
                     }
                 });
             }
             Err(e) => {
-                println!("Failed to accept connection: {}", e);
+                eprintln!("Failed to accept connection: {}", e);
             }
         }
     }
+    // end -- tcplistener, listening loop
 }
