@@ -95,7 +95,7 @@ curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GG
 ```sh
 
 kubectl apply -f yaml/default-services.yaml
-kubectl apply -f yaml/load-balancer
+kubectl apply -f yaml/load-balancer.yaml
 ```
 
 ### 5. Query the llama-api-server
