@@ -248,3 +248,33 @@ To list the successfully registered services - ie. those able to handle load
 ```sh
 curl http://localhost:8080/api/services
 ```
+
+### 3. FEAT : k8s style automated dynamic service registration/deletion/updation
+
+Register a new service with 
+```yaml
+labels:
+  llamaedge/target: "true"
+annotations:
+  llamaedge/weight: "2"
+```
+in it's `metadata` field and the service is good to recieve requests from the load-balancer
+
+```yaml
+kubectl apply -f load-balancer-llamaedge/yaml/test-service.yaml
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: llama-test-service
+#   labels:
+#     lb/target: "true"
+#   annotations:
+#     lb/weight: "2"
+# spec:
+#   selector:
+#     app: llama-test
+#   ports:
+#     - port: 8080
+#       targetPort: 8080
+#   type: ClusterIP
+```
