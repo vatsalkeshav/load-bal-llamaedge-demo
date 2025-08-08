@@ -118,6 +118,10 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-low-cost-service
+  labels:
+    llamaedge/target: "true"
+  annotations:
+    llamaedge/weight: "3"
 spec:
   selector:
     app: llama-low-cost
@@ -243,3 +247,20 @@ spec:
             path: /lib/aarch64-linux-gnu/libgcc_s.so.1
             type: File
 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-high-cost-service
+  labels:
+    llamaedge/target: "true"
+  annotations:
+    llamaedge/weight: "1"
+spec:
+  selector:
+    app: llama-high-cost
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

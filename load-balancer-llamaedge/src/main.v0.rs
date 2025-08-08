@@ -1,6 +1,7 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::{env, sync::Arc};
+use std::env;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
@@ -35,16 +36,20 @@ impl ServiceRegistry {
 
     async fn register_service(&self, service: Service) {
         println!(
-            "registering service: {} (weight: {}) at {}:{}",
+            "Attempting to register service: {} (weight: {}) at {}:{}",
             service.name, service.weight, service.ip, service.port
         );
 
-        // acquire write lock (blocks other writers, allows concurrent readers)
+        // acquire write lock ( blocks other writers, allows concurrent readers )
         let mut services = self.services.write().await;
 
         if let Some(existing) = services.iter_mut().find(|s| s.name == service.name) {
             println!(
-                "updating existing service '{}': weight {} -> {}, address {}:{} -> {}:{}",
+                "Found existing service '{}' with weight: {} at {}:{}",
+                existing.name, existing.weight, existing.ip, existing.port
+            );
+            println!(
+                "Updated existing service: {} (weight: {} -> {}, address: {}:{} -> {}:{})",
                 service.name,
                 existing.weight,
                 service.weight,
@@ -56,23 +61,23 @@ impl ServiceRegistry {
             *existing = service;
         } else {
             println!(
-                "registered new service: {} (weight: {}) at {}:{}",
+                "Registered new service: {} (weight: {}) at {}:{}",
                 service.name, service.weight, service.ip, service.port
             );
             services.push(service);
         }
 
-        println!("total services registered: {}", services.len());
+        println!("Total services registered: {}", services.len());
         for service in services.iter() {
             println!(
-                "  - {} (weight: {}) at {}:{}",
+                "  - {} ( weight : {} ) at {}:{}",
                 service.name, service.weight, service.ip, service.port
             );
         }
     }
 
     async fn unregister_service(&self, name: &str) -> bool {
-        // acquire write lock (blocks other writers, allows concurrent readers)
+        // acquire write lock ( blocks other writers, allows concurrent readers )
         let mut services = self.services.write().await;
 
         let initial_len = services.len();
@@ -80,15 +85,15 @@ impl ServiceRegistry {
 
         let removed = services.len() < initial_len;
         if removed {
-            println!("unregistered service: {}", name);
+            println!("Unregistered service: {}", name);
         } else {
-            println!("service not found for unregistration: {}", name);
+            println!("Failed to unregister service (not found): {}", name);
         }
 
-        println!("total services registered: {}", services.len());
+        println!("Total services registered: {}", services.len());
         for service in services.iter() {
             println!(
-                "  - {} (weight: {}) at {}:{}",
+                "  - {} ( weight : {} ) at {}:{}",
                 service.name, service.weight, service.ip, service.port
             );
         }
@@ -101,18 +106,17 @@ impl ServiceRegistry {
         services.clone()
     }
 
-    // reminiscence of previous environment-variable-address-approach :D
     async fn get_service_address(&self, service_name: &str) -> Option<String> {
         let services = self.services.read().await;
         if let Some(service) = services.iter().find(|s| s.name == service_name) {
             let address = format!("{}:{}", service.ip, service.port);
             println!(
-                "resolved service '{}' to address: {}",
+                "Resolved service '{}' to address: {}",
                 service_name, address
             );
             Some(address)
         } else {
-            println!("service '{}' not found in registry", service_name);
+            println!("Service '{}' not found in registry", service_name);
             None
         }
     }
@@ -120,14 +124,14 @@ impl ServiceRegistry {
 
 fn select_service(services: &[Service]) -> Option<&Service> {
     if services.is_empty() {
-        println!("no services available for selection");
+        println!("No services available for selection");
         return None;
     }
 
     let total_weight: u32 = services.iter().map(|s| s.weight).sum();
     if total_weight == 0 {
         println!(
-            "all services have zero weight, selecting first service: {}",
+            "All services have zero weight, selecting first service: {}",
             services[0].name
         );
         return services.first();
@@ -140,7 +144,7 @@ fn select_service(services: &[Service]) -> Option<&Service> {
     for service in services {
         if choice < service.weight {
             println!(
-                "selected service '{}' (choice: {}/{}, weight: {})",
+                "Selected service '{}' (choice: {}/{}, weight: {})",
                 service.name, original_choice, total_weight, service.weight
             );
             return Some(service);
@@ -149,7 +153,6 @@ fn select_service(services: &[Service]) -> Option<&Service> {
         choice = choice.saturating_sub(service.weight);
     }
 
-    // fallback to first service (should be rare)
     println!(
         "A rare thing has happened and none of the services got selected\nLet's fallback to the first service: {}",
         services[0].name
@@ -165,9 +168,9 @@ async fn read_request(
     let mut temp_buf = [0; 1024];
 
     loop {
-        let bytes_read = stream.read(&mut temp_buf).await?;
+        let number_of_read_bytes = stream.read(&mut temp_buf).await?;
         // sanity check
-        if bytes_read == 0 {
+        if number_of_read_bytes == 0 {
             println!(
                 "client {} closed the connection gracefully - zero bytes read : EOF",
                 peer_addr
@@ -175,15 +178,14 @@ async fn read_request(
             break;
         }
 
-        buffer.extend_from_slice(&temp_buf[..bytes_read]);
-
+        buffer.extend_from_slice(&temp_buf[..number_of_read_bytes]);
         // break loop - if found end of header
         if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
             break;
         }
     }
 
-    // separate headers and body from http request
+    // start -- separate headers and body from http request
     let request_str = String::from_utf8_lossy(&buffer);
     let (headers, _) = request_str
         .split_once("\r\n\r\n")
@@ -197,7 +199,7 @@ async fn read_request(
     };
 
     println!(
-        "read request from {}: headers {} bytes, body {} bytes",
+        "Read request from client : {}\nheaders size: {}\nbody size: {}",
         peer_addr,
         headers.len(),
         body.len()
@@ -214,7 +216,7 @@ async fn handle_api_request(
     peer_addr: std::net::SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!(
-        "handling api request from {}: {} {}",
+        "Handling API request from {}: {} {}",
         peer_addr, method, path
     );
 
@@ -222,7 +224,7 @@ async fn handle_api_request(
         ("POST", "/api/register") => {
             if let Ok(req) = serde_json::from_slice::<RegisterRequest>(body) {
                 println!(
-                    "registration request from {}: {} (weight: {}) at {}:{}",
+                    "Registration request from {} for service: {} (weight: {}) at {}:{}",
                     peer_addr, req.name, req.weight, req.ip, req.port
                 );
                 let service = Service {
@@ -236,7 +238,7 @@ async fn handle_api_request(
                     .write_all(b"HTTP/1.1 200 OK\r\n\r\nRegistered")
                     .await?;
             } else {
-                println!("invalid json in registration request from {}", peer_addr);
+                println!("Invalid JSON in registration request from {}", peer_addr);
                 stream
                     .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\nInvalid JSON")
                     .await?;
@@ -245,7 +247,7 @@ async fn handle_api_request(
         ("DELETE", path) if path.starts_with("/api/unregister/") => {
             let service_name = path.strip_prefix("/api/unregister/").unwrap_or("");
             println!(
-                "unregistration request from {} for service: {}",
+                "Unregistration request from {} for service: {}",
                 peer_addr, service_name
             );
             if registry.unregister_service(service_name).await {
@@ -261,7 +263,7 @@ async fn handle_api_request(
         ("GET", "/api/services") => {
             let services = registry.list_services().await;
             println!(
-                "listing {} services for request from {}",
+                "Listing {} registered services for request from {}",
                 services.len(),
                 peer_addr
             );
@@ -274,7 +276,7 @@ async fn handle_api_request(
         }
         _ => {
             println!(
-                "unknown api request from {}: {} {}",
+                "Unknown API request from {}: {} {}",
                 peer_addr, method, path
             );
             stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n").await?;
@@ -291,7 +293,7 @@ async fn handle_client(
     let peer_addr = stream
         .peer_addr()
         .unwrap_or_else(|_| "unknown".parse().unwrap());
-    println!("handling connection from {}", peer_addr);
+    println!("handling connection from client : {}", peer_addr);
 
     // read the http request to a tuple
     let (headers, body) = read_request(&mut stream, peer_addr).await?;
@@ -300,7 +302,7 @@ async fn handle_client(
     let parts: Vec<&str> = request_line.split_whitespace().collect();
 
     if parts.len() != 3 {
-        println!("invalid request line from {}: {}", peer_addr, request_line);
+        println!("Invalid request line from {}: {}", peer_addr, request_line);
         stream
             .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
             .await?;
@@ -309,17 +311,15 @@ async fn handle_client(
 
     let method = parts[0];
     let path = parts[1];
-    println!("request from {}: {} {}", peer_addr, method, path);
+    println!("Request from {}: {} {}", peer_addr, method, path);
 
-    // handle api requests
     if path.starts_with("/api/") {
         return handle_api_request(stream, registry, method, path, &body, peer_addr).await;
     }
 
-    // only handle chat completions for load balancing
     if method != "POST" || path != "/v1/chat/completions" {
         println!(
-            "unsupported request from {}: {} {}",
+            "Unsupported request from {}: {} {}",
             peer_addr, method, path
         );
         stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n").await?;
@@ -327,12 +327,12 @@ async fn handle_client(
     }
 
     let services = registry.list_services().await;
-    println!("available services for load balancing: {}", services.len());
+    println!("Available services for load balancing: {}", services.len());
 
     let selected_service = match select_service(&services) {
         Some(service) => service,
         None => {
-            println!("no services available for request from {}", peer_addr);
+            println!("No services available for request from {}", peer_addr);
             stream
                 .write_all(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
                 .await?;
@@ -344,7 +344,7 @@ async fn handle_client(
         Some(addr) => addr,
         None => {
             println!(
-                "failed to resolve address for service: {}",
+                "Failed to resolve address for service: {}",
                 selected_service.name
             );
             stream
@@ -355,7 +355,7 @@ async fn handle_client(
     };
 
     println!(
-        "forwarding request from {} to service '{}' at {}",
+        "Forwarding request from {} to service '{}' at {}",
         peer_addr, selected_service.name, address
     );
 
@@ -367,13 +367,13 @@ async fn handle_client(
 
             let bytes_copied = tokio::io::copy(&mut backend_stream, &mut stream).await?;
             println!(
-                "completed request from {} via '{}' - {} bytes returned",
+                "Completed request from {} via '{}' - {} bytes returned",
                 peer_addr, selected_service.name, bytes_copied
             );
         }
         Err(e) => {
             println!(
-                "failed to connect to service '{}' at {}: {}",
+                "Failed to connect to service '{}' at {}: {}",
                 selected_service.name, address, e
             );
             stream
@@ -385,41 +385,86 @@ async fn handle_client(
     Ok(())
 }
 
+async fn initialize_services_from_env(registry: Arc<ServiceRegistry>) {
+    println!("Initializing services from environment variables...");
+
+    if let Ok(services_str) = env::var("SERVICES") {
+        println!("Found SERVICES env var: {}", services_str);
+
+        for service_def in services_str.split(';') {
+            let parts: Vec<&str> = service_def.split(',').collect();
+            if parts.len() >= 4 {
+                let name = parts[0].trim().to_string();
+                if let (Ok(weight), Ok(port)) = (
+                    parts[1].trim().parse::<u32>(),
+                    parts[3].trim().parse::<u16>(),
+                ) {
+                    let ip = parts[2].trim().to_string();
+                    let service = Service {
+                        name,
+                        weight,
+                        ip,
+                        port,
+                    };
+                    registry.register_service(service).await;
+                } else {
+                    println!(
+                        "Invalid weight or port for service '{}': weight={}, port={}\nweight must be a whole number, port must be a valid port number",
+                        name, parts[1], parts[3]
+                    );
+                }
+            } else {
+                println!(
+                    "Invalid service definition: {}\n(expected format: 'service-name,weight,ip,port;...' e.g., 'llama-low-cost-service,3,10.42.0.12,8080;llama-high-cost-service,1,10.42.0.13,8080')",
+                    service_def
+                );
+            }
+        }
+    } else {
+        println!(
+            "SERVICES env var is not set\n(expected format: 'service-name,weight,ip,port;...' e.g., 'llama-low-cost-service,3,10.42.0.12,8080;llama-high-cost-service,1,10.42.0.13,8080')\nServices can also be registered via API calls to /api/register"
+        );
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    println!("initializing load-balancer...");
-
+    println!("Initializing load-balancer");
     // `let registry = Arc::new(ServiceRegistry::new())` could be used due to wasm's single threaded nature
     // but `Arc` works well with `tokio::spawn`
     let registry = Arc::new(ServiceRegistry::new());
+    initialize_services_from_env(registry.clone()).await;
 
+    // start -- tcplistener, listening loop
     let addr = env::args()
         .nth(1)
         .unwrap_or_else(|| "0.0.0.0:8080".to_string());
 
     let listener = TcpListener::bind(&addr)
         .await
-        .unwrap_or_else(|_| panic!("failed to bind to address: {}", addr));
-    println!("load balancer listening on: {}", addr);
+        .expect(&format!("Failed to bind to address: {}", &addr));
 
-    // loop to keep listening to new connections on the tcplistener bound address
+    println!("Load balancer listening on: {}", addr);
+
+    // loop to keep listening to new connections on the tcplistener address
     loop {
         match listener.accept().await {
             // rust's destructuring assignment :
             // stream: The TcpStream
             // peer_addr: The SocketAddr
             Ok((stream, peer_addr)) => {
-                println!("accepted connection from: {}", peer_addr);
+                println!("Accepted connection from: {}", peer_addr);
                 let registry_clone = registry.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_client(stream, registry_clone).await {
-                        println!("error handling client {}: {}", peer_addr, e);
+                        println!("Error handling client : {}\nerror: {}", peer_addr, e);
                     }
                 });
             }
             Err(e) => {
-                eprintln!("failed to accept connection: {}", e);
+                eprintln!("Failed to accept connection: {}", e);
             }
         }
     }
+    // end -- tcplistener, listening loop
 }

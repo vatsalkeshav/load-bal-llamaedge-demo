@@ -28,7 +28,7 @@ sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
 ```
 
 
-### 3. Building image ghcr.io/second-state/llama-api-server:latest
+### 2. Building image ghcr.io/second-state/llama-api-server:latest
 This step builds the `ghcr.io/second-state/llama-api-server:latest` image and imports it to the k3s' containerd's local image store
 
 > same as `Build and import demo image` from [README.md]](https://github.com/second-state/runwasi-wasmedge-demo/README.md)
@@ -63,7 +63,7 @@ sudo k3s ctr image import --all-platforms $HOME/runwasi-wasmedge-demo/apps/llama
 sudo k3s ctr images ls # verify the import
 ```
 
-### 5. Build the load-balancer-app
+### 3. Build the load-balancer-app
 ```sh
 cd load-balancer-llamaedge
 cargo build --target wasm32-wasip1 --release
@@ -76,6 +76,7 @@ oci-tar-builder --name load-balancer-llamaedge \
 sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
 sudo k3s ctr images ls # verify the import
 ```
+
 
 
 ### 4. Download the gguf model needed by llama-api-server
