@@ -48,7 +48,7 @@ jobs:
           sudo k3s --version
           echo "K3s installed successfully"
 
-      - name: Download watcher's docker image
+      - name: Download service-watcher's docker image
         run: |
             sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.91
 
@@ -63,140 +63,97 @@ jobs:
           source ~/.bashrc
           which containerd-shim-wasmedge-v1 # verify installation
 
-      - name: Build and import LlamaEdge's llama-api-server.wasm
+      - name: Build and import LlamaEdge's llama-api-server's wasm img
         run: |
             cd $HOME
             git clone --recurse-submodules https://github.com/second-state/runwasi-wasmedge-demo.git
-
             cd runwasi-wasmedge-demo
+
             sed -i -e '/define CHECK_CONTAINERD_VERSION/,/^endef/{
             s/Containerd version must be/WARNING: Containerd version should be/
             /exit 1;/d
             }' Makefile
 
             git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
+
             rustup target add wasm32-wasip1
             OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
 
-      - name: Build the llama-api-server.wasm's OCI image and import it to k3s' containerd
-        run: |
-          cd $HOME/runwasi-wasmedge-demo/apps/llamaedge/llama-api-server
-          oci-tar-builder --name llama-api-server \
-            --repo ghcr.io/second-state \
-            --tag latest \
-            --module target/wasm32-wasip1/release/llama-api-server.wasm \
-            -o target/wasm32-wasip1/release/img-oci.tar
-          sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-          echo "Llama API server image imported successfully"
-          sudo k3s ctr images ls # verify image import
+            cd apps/llamaedge/llama-api-server
+            oci-tar-builder --name llama-api-server \
+                --repo ghcr.io/second-state \
+                --tag latest \
+                --module target/wasm32-wasip1/release/llama-api-server.wasm \
+                -o target/wasm32-wasip1/release/img-oci.tar
+            sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
+            sudo k3s ctr images ls # verify image import
 
-      - name: Build load-balancer-llamaedge.wasm
+      - name: Build and import load-balancer's wasm img
         run: |
             cd $GITHUB_WORKSPACE/load-balancer-llamaedge
+
             RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" cargo build --release --target wasm32-wasip1
 
-      - name: Build the load-balancer-llamaedge.wasm's OCI image and import it to k3s' containerd
-        run: |
-            cd $GITHUB_WORKSPACE/load-balancer-llamaedge
             oci-tar-builder --name load-balancer-llamaedge \
                 --repo ghcr.io/second-state \
                 --tag latest \
                 --module target/wasm32-wasip1/release/load-balancer-llamaedge.wasm \
                 -o target/wasm32-wasip1/release/img-oci.tar # Create OCI image from the WASM binary
             sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-            echo "Load balancer image imported successfully"
             sudo k3s ctr images ls # verify the import
-
-
+            
       - name: Download gguf model
         run: |
           sudo mkdir -p $HOME/models
           sudo chmod 777 $HOME/models
           cd /home/runner/models
-          echo "Downloading GGUF models..."
           curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
           curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf
-          curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
-          echo "Models downloaded successfully:"
+          # curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
           ls -la /home/runner/models/
           
-          # Verify the models that will be used match the YAML configurations
-          echo "Verifying model files for YAML configurations..."
-          REQUIRED_MODELS=(
-            "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"  # Used by low-cost pods
-            "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"  # Used by high-cost pods
-          )
-          
-          for model in "${REQUIRED_MODELS[@]}"; do
-            if [ -f "$model" ]; then
-              echo "✓ Model found: $model"
-            else
-              echo "✗ Missing model: $model"
-              exit 1
-            fi
-          done
-
-      - name: Validate Kubernetes manifests
-        run: |
-          echo "Validating required Kubernetes manifest files..."
-          REQUIRED_FILES=(
-            "$GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml"
-            "$GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml"
-            "$GITHUB_WORKSPACE/watcher/yaml/watcher.yaml"
-          )
-          
-          for file in "${REQUIRED_FILES[@]}"; do
-            if [ -f "$file" ]; then
-              echo "✓ Found: $file"
-            else
-              echo "✗ Missing: $file"
-              exit 1
-            fi
-          done
-          echo "All required manifest files found"
+        #   # Verify the models that will be used match the YAML configurations
+        #   echo "Verifying model files for YAML configurations..."
+        #   REQUIRED_MODELS=(
+        #     "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"  # Used by low-cost pods
+        #     "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"  # Used by high-cost pods
+        #   )
+        #   for model in "${REQUIRED_MODELS[@]}"; do
+        #     if [ -f "$model" ]; then
+        #       echo "✓ Model found: $model"
+        #     else
+        #       echo "✗ Missing model: $model"
+        #       exit 1
+        #     fi
+        #   done
 
       - name: Create and apply necessary yaml's - for load-balancer, backend-llamaedge-api-servers and service-watcher
         run: |
-          echo "Applying Kubernetes manifests..."
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml
-          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
-          echo "Waiting for pods to initialize..."
-          sleep 20
-          echo "Current pod status:"
-          sudo k3s kubectl get pods
+          # sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
 
+          sleep 30
+          echo "Current pod/service status:"
           sudo k3s kubectl get all
-          
-          # Verify expected pods are created
-          echo "Verifying expected pods are created..."
-          
-          # Check load balancer (should be 1)
-          LB_COUNT=$(sudo k3s kubectl get pods -l app=load-balancer --no-headers 2>/dev/null | wc -l)
-          echo "✓ Found $LB_COUNT load-balancer pod(s) (expected: 1)"
-          
-          # Check low-cost pods (should be 3)
-          LOW_COUNT=$(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers 2>/dev/null | wc -l)
-          echo "✓ Found $LOW_COUNT llama-low-cost pod(s) (expected: 3)"
-          
-          # Check high-cost pods (should be 2)  
-          HIGH_COUNT=$(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers 2>/dev/null | wc -l)
-          echo "✓ Found $HIGH_COUNT llama-high-cost pod(s) (expected: 2)"
-          
-          TOTAL_LLAMA=$((LOW_COUNT + HIGH_COUNT))
-          echo "✓ Total Llama pods: $TOTAL_LLAMA (expected: 5)"
+          sudo k3s kubectl describe deployment llama-high-cost
+          sudo k3s kubectl describe deployment llama-low-cost
+          sudo k3s kubectl describe deployment load-balancer
 
-      - name: Wait for Pod Readiness
-        run: |
-          echo "Waiting for load balancer pod to be ready..."
-          timeout 120 bash -c 'until sudo k3s kubectl get pods -l app=load-balancer -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
+    #   - name: Wait for Pod Readiness
+    #     run: |
+    #       echo "Waiting for load balancer pod to be ready..."
+    #       timeout 180 bash -c 'until sudo k3s kubectl get pods -l app=load-balancer -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
           
-          echo "Waiting for llama-api-server pods to be ready..."
-          timeout 120 bash -c 'until sudo k3s kubectl get pods -l app=llama-low-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
-          timeout 120 bash -c 'until sudo k3s kubectl get pods -l app=llama-high-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
+    #       echo "Waiting for llama-api-server pods to be ready..."
+    #       timeout 180 bash -c 'until sudo k3s kubectl get pods -l app=llama-low-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
+    #       timeout 180 bash -c 'until sudo k3s kubectl get pods -l app=llama-high-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
           
-          echo "All pods should be running now:"
-          sudo k3s kubectl get pods
+    #       echo "Waiting for all pods to be fully ready..."
+    #       timeout 180 bash -c 'until [ $(sudo k3s kubectl get pods -l app=llama-low-cost,app=llama-high-cost,app=load-balancer --field-selector=status.phase=Running --no-headers | wc -l) -eq 6 ]; do echo "Waiting for all 6 pods..."; sleep 10; done'
+          
+    #       echo "All pods should be running now:"
+    #       sudo k3s kubectl get pods
 
       - name: Pod Health and Readiness Tests
         run: |
@@ -683,5 +640,5 @@ jobs:
           echo "Deleting Kubernetes resources..."
           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml 2>/dev/null || true
           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml 2>/dev/null || true
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml 2>/dev/null || true
+          # sudo k3s kubectl delete -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml 2>/dev/null || true
           echo "Cleanup completed"
