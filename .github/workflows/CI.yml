@@ -50,17 +50,18 @@ jobs:
 
       - name: Build LlamaEdge's llama-api-server.wasm
         run: |
-          git clone https://github.com/second-state/runwasi-wasmedge-demo.git
+            cd $HOME
+            git clone --recurse-submodules https://github.com/second-state/runwasi-wasmedge-demo.git
 
-          cd runwasi-wasmedge-demo
-          sed -i -e '/define CHECK_CONTAINERD_VERSION/,/^endef/{
-          s/Containerd version must be/WARNING: Containerd version should be/
-          /exit 1;/d
-          }' Makefile
+            cd runwasi-wasmedge-demo
+            sed -i -e '/define CHECK_CONTAINERD_VERSION/,/^endef/{
+            s/Containerd version must be/WARNING: Containerd version should be/
+            /exit 1;/d
+            }' Makefile
 
-          git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
+            git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
 
-          OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
+            OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
 
       - name: Build load-balancer-llamaedge.wasm
         run: |

@@ -221,32 +221,6 @@ cd && cd $TEST_DIR
 kill $PORT_FORWARD_PID
 ```
 
-### 3. ( _WIP :_ ) API on load-balancer for managing services handling load
-
-To register a new service
-```sh
-# 1 
-kubectl apply -f test_service.yaml
-
-# 2 ( Register the service - working on eliminating this step )
-curl -X POST http://localhost:8080/api/register \
--H "Content-Type: application/json" \
--d '{"name": "llama-test-service", "weight": 3}'
-
-# 3 ( restart the load-balancer deployment - working on eliminating this step )
-kubectl rollout restart deployment/load-balancer
-```
-
-To un-register it
-```sh
-curl -X DELETE http://localhost:8080/api/unregister/llama-test-service
-```
-
-To list the successfully registered services - ie. those able to handle load
-```sh
-curl http://localhost:8080/api/services
-```
-
 ### 3. FEAT : k8s style automated dynamic service registration/deletion/updation
 
 Register a new service with 
