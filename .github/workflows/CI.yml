@@ -102,6 +102,9 @@ jobs:
             echo "Load balancer image imported successfully"
             sudo k3s ctr images ls # verify the import
 
+      - name: Download watcher's docker image
+        run: |
+            sudo k3s ctr image pull vatsalkeshav/watcher:0.09
 
       - name: Download gguf model
         run: |
@@ -120,7 +123,7 @@ jobs:
           echo "Validating required Kubernetes manifest files..."
           REQUIRED_FILES=(
             "$GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml"
-            "$GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services.yaml"
+            "$GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml"
             "$GITHUB_WORKSPACE/watcher/yaml/watcher.yaml"
           )
           
@@ -138,7 +141,7 @@ jobs:
         run: |
           echo "Applying Kubernetes manifests..."
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml
-          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services.yaml
+          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
           echo "Waiting for pods to initialize..."
           sleep 20
