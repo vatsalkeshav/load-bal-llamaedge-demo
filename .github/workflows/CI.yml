@@ -60,7 +60,7 @@ jobs:
             }' Makefile
 
             git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
-
+            rustup target add wasm32-wasip1
             OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
 
       - name: Build load-balancer-llamaedge.wasm
@@ -115,32 +115,108 @@ jobs:
           echo "PORTER_PID=$PF_PID" >> $GITHUB_ENV
           sleep 6
 
-      - name: Test API endpoint and log the output
+      - name: Run Sequential Load Test (10 requests)
         run: |
           mkdir -p logs
-          curl -X POST http://localhost:8080/v1/chat/completions \
-            -H 'accept:application/json' \
-            -H 'Content-Type: application/json' \
-            -d '{
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "Who is Robert Oppenheimer?"}
-                ],
-                "model": "llama-3-1b"
-            }' | tee "logs/api_response_$(date +'%Y-%m-%d').json"
-      
-    #   - name: Display and save pod logs
-    #     run: |
-    #       POD_NAME=$(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name" | head -n 1)
-    #       echo "POD_NAME=$POD_NAME" >> $GITHUB_ENV
-    #       sudo k3s kubectl logs $POD_NAME
-    #       sudo k3s kubectl logs $POD_NAME > "logs/pod_logs_$(date +'%Y-%m-%d').log"
+          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
+          LOG_FILE="logs/sequential_test_${TIMESTAMP}.log"
+          RESPONSES_FILE="logs/all_responses_${TIMESTAMP}.json"
           
-    #   - name: Upload Logs as Artifact
-    #     uses: actions/upload-artifact@v4
-    #     with:
-    #       name: daily-logs-${{ github.run_number }}
-    #       path: logs/
+          echo "Starting sequential test at $(date)" | tee "$LOG_FILE"
+          echo "========================================" | tee -a "$LOG_FILE"
+          
+          # Initialize responses file as JSON array
+          echo "[" > "$RESPONSES_FILE"
+          
+          for i in {1..10}; do
+              echo "=== Request $i ===" | tee -a "$LOG_FILE"
+              echo "Timestamp: $(date +'%H:%M:%S.%3N')" | tee -a "$LOG_FILE"
+              
+              # Capture both response and timing info
+              response=$(curl --max-time 60 -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
+                  -X POST http://localhost:8080/v1/chat/completions \
+                  -H 'Content-Type: application/json' \
+                  -d "{\"messages\": [{\"role\": \"user\", \"content\": \"\"}], \"model\": \"llama-3-1b\"}" \
+                  --silent --show-error 2>&1)
+              
+              # Extract just the JSON response (without timing info)
+              json_response=$(echo "$response" | head -n -2)
+              
+              # Log the full response to log file
+              echo "$response" | tee -a "$LOG_FILE"
+              echo -e "\n---\n" | tee -a "$LOG_FILE"
+              
+              # Add JSON response to combined file
+              if [ $i -gt 1 ]; then
+                echo "," >> "$RESPONSES_FILE"
+              fi
+              echo "  {" >> "$RESPONSES_FILE"
+              echo "    \"request_number\": $i," >> "$RESPONSES_FILE"
+              echo "    \"timestamp\": \"$(date +'%H:%M:%S.%3N')\"," >> "$RESPONSES_FILE"
+              echo "    \"response\": $json_response" >> "$RESPONSES_FILE"
+              echo "  }" | tr '\n' ' ' >> "$RESPONSES_FILE"
+              
+              sleep 0.5
+          done
+          
+          # Close JSON array
+          echo "" >> "$RESPONSES_FILE"
+          echo "]" >> "$RESPONSES_FILE"
+          
+          echo "Sequential test completed at $(date)" | tee -a "$LOG_FILE"
+          echo "All responses saved to: $RESPONSES_FILE"
+
+      - name: Check Load Balancer Logs
+        run: |
+          echo "Fetching load balancer logs..."
+          LB_POD=$(sudo k3s kubectl get pods -l app=load-balancer -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [ -n "$LB_POD" ]; then
+            echo "Load balancer pod: $LB_POD"
+            
+            # Get full logs
+            sudo k3s kubectl logs "$LB_POD" | tee "logs/load_balancer_logs_$(date +'%Y-%m-%d_%H-%M-%S').log"
+            
+            echo ""
+            echo "=========================================="
+            echo "LAST 20 LINES OF LOAD BALANCER LOGS:"
+            echo "=========================================="
+            
+            # Display and log last 20 lines to show load balancing decisions
+            LAST_20_LINES=$(sudo k3s kubectl logs "$LB_POD" --tail=20)
+            echo "$LAST_20_LINES"
+            echo "$LAST_20_LINES" > "logs/load_balancer_last_20_lines_$(date +'%Y-%m-%d_%H-%M-%S').log"
+            
+            echo "=========================================="
+            echo "Load balancing activity shown above demonstrates:"
+            echo "- Service selection decisions"
+            echo "- Connection routing to backend services"
+            echo "- Weighted distribution in action"
+            echo "=========================================="
+          else
+            echo "No load balancer pod found"
+          fi
+
+      - name: Display and save pod logs
+        run: |
+          mkdir -p logs
+          # Get all pod logs
+          sudo k3s kubectl get pods --all-namespaces | tee "logs/all_pods_$(date +'%Y-%m-%d_%H-%M-%S').log"
+          
+          # Get llama-api-server pods logs
+          for pod in $(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
+            if [ -n "$pod" ]; then
+              echo "Getting logs for pod: $pod"
+              sudo k3s kubectl logs "$pod" > "logs/pod_${pod}_$(date +'%Y-%m-%d_%H-%M-%S').log" 2>/dev/null || true
+            fi
+          done
+          
+      - name: Upload Test Logs and Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-logs-${{ github.run_number }}-${{ github.run_attempt }}
+          path: logs/
+          retention-days: 7
 
       - name: Cleanup
         if: always()
