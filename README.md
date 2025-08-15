@@ -27,7 +27,6 @@ curl -sfL https://get.k3s.io | sh -
 sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
 ```
 
-
 ### 2. Building image ghcr.io/second-state/llama-api-server:latest
 This step builds the `ghcr.io/second-state/llama-api-server:latest` image and imports it to the k3s' containerd's local image store
 
@@ -78,7 +77,6 @@ sudo k3s ctr images ls # verify the import
 ```
 
 
-
 ### 4. Download the gguf model needed by llama-api-server
 ```sh 
 cd
@@ -94,12 +92,41 @@ curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GG
 ### 5. Apply the kubernetes configuration yaml's
 
 ```sh
-
 kubectl apply -f yaml/default-services.yaml
 kubectl apply -f yaml/load-balancer.yaml
 ```
 
-### 5. Query the llama-api-server
+these yaml configs are for Ubuntu 22.04 running on ARM64 platform, so paths for system libs (like)
+
+`/lib/aarch64-linux-gnu/libm.so.6`
+`/lib/aarch64-linux-gnu/libpthread.so.0`
+`/lib/aarch64-linux-gnu/libc.so.6`
+`/lib/ld-linux-aarch64.so.1`
+`/lib/aarch64-linux-gnu/libdl.so.2`
+`/lib/aarch64-linux-gnu/libstdc++.so.6`
+`/lib/aarch64-linux-gnu/libgcc-s.so.1`
+
+might be different
+
+So, for a different platform, all libs in output of 
+`~/.wasmedge/plugin/libwasmedgePluginWasiNN.so`
+should be mounted as files to exact same paths at which they were in host machine.
+
+> For this purpose, `wasi-nn-chart/values-generator.sh` is there
+
+> For `generating custom default-services-op.yaml template with wasi-nn plugin and dependencies volume mounts for your linux based OS`, refer [./helm.README.md)(https://github.com/vatsalkeshav/runwasi-wasmedge-demo/helm.README.md)
+
+Some yaml's also available at hand :
+```sh
+./load-balancer-llamaedge/yaml
+├── default-services-gh.yaml   # for github actions (Ubuntu, x86_64)
+├── default-services.yaml      # for Ubuntu:22.04 (ARM64)
+├── load-balancer.yaml
+├── test-service-gh.yaml       # for github actions (Ubuntu, x86_64)
+└── test-service.yaml          # for Ubuntu:22.04 (ARM64)
+```
+
+### 6. Query the llama-api-server
 #### 1. Sequential test
 ```sh
 sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080 &
@@ -223,33 +250,7 @@ cd && cd $TEST_DIR
 kill $PORT_FORWARD_PID
 ```
 
-### 3. ( _WIP :_ ) API on load-balancer for managing services handling load
-
-To register a new service
-```sh
-# 1 
-kubectl apply -f test_service.yaml
-
-# 2 ( Register the service - working on eliminating this step )
-curl -X POST http://localhost:8080/api/register \
--H "Content-Type: application/json" \
--d '{"name": "llama-test-service", "weight": 3}'
-
-# 3 ( restart the load-balancer deployment - working on eliminating this step )
-kubectl rollout restart deployment/load-balancer
-```
-
-To un-register it
-```sh
-curl -X DELETE http://localhost:8080/api/unregister/llama-test-service
-```
-
-To list the successfully registered services - ie. those able to handle load
-```sh
-curl http://localhost:8080/api/services
-```
-
-### 3. FEAT : k8s style automated dynamic service registration/deletion/updation
+### 7. FEAT : k8s style automated dynamic service registration/deletion/updation
 
 Register a new service with 
 ```yaml

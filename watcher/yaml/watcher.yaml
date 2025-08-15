@@ -48,7 +48,7 @@ spec:
       serviceAccountName: watcher-sa
       containers:
         - name: watcher
-          image: docker.io/vatsalkeshav/watcher:0.08
+          image: docker.io/vatsalkeshav/watcher:0.91
           imagePullPolicy: Never
           env:
             - name: RUST_LOG

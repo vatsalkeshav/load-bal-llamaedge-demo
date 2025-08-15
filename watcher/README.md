@@ -2,19 +2,20 @@
 ```sh
 cargo build
 # or build image using Dockerfile :
-docker build -t vatsalkeshav/watcher:0.08 . 
+docker build -t vatsalkeshav/watcher:0.09 . 
+# or some other name - just remember to mention it in kubernetes configuration : `/watcher/yaml/watcher.yaml`
 ```
 
 ### 2. Or use pre-built image
 ```sh
-docker image pull vatsalkeshav/watcher:0.08
+docker image pull docker.io/vatsalkeshav/watcher:0.91
 # or
-ctr image pull vatsalkeshav/watcher:0.08
+ctr image pull dokcer.io/vatsalkeshav/watcher:0.91
 ```
 
 ### 3. Deploy the service-watcher
 ```sh
-kubectl apply -f watcher_yaml/deployment.yaml
+kubectl apply -f watcher_yaml/watcher.yaml
 ```
 
 ### what this service-watcher does
