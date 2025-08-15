@@ -131,7 +131,7 @@ jobs:
         run: |
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml
-          # sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
+          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
 
           sleep 30
           echo "Current pod/service status:"
