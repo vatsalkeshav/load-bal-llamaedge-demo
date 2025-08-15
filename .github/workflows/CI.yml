@@ -1,4 +1,4 @@
-name: help!!!
+name: godhelpsthosewhohelpthemselves
 
 on:
   push:
@@ -119,6 +119,22 @@ jobs:
           curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
           echo "Models downloaded successfully:"
           ls -la /home/runner/models/
+          
+          # Verify the models that will be used match the YAML configurations
+          echo "Verifying model files for YAML configurations..."
+          REQUIRED_MODELS=(
+            "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"  # Used by low-cost pods
+            "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"  # Used by high-cost pods
+          )
+          
+          for model in "${REQUIRED_MODELS[@]}"; do
+            if [ -f "$model" ]; then
+              echo "✓ Model found: $model"
+            else
+              echo "✗ Missing model: $model"
+              exit 1
+            fi
+          done
 
       - name: Validate Kubernetes manifests
         run: |
@@ -154,15 +170,21 @@ jobs:
           
           # Verify expected pods are created
           echo "Verifying expected pods are created..."
-          EXPECTED_PODS=("load-balancer" "llama-api-server")
-          for pod_label in "${EXPECTED_PODS[@]}"; do
-            POD_COUNT=$(sudo k3s kubectl get pods -l app=$pod_label --no-headers 2>/dev/null | wc -l)
-            if [ "$POD_COUNT" -gt 0 ]; then
-              echo "✓ Found $POD_COUNT pod(s) with label app=$pod_label"
-            else
-              echo "✗ No pods found with label app=$pod_label"
-            fi
-          done
+          
+          # Check load balancer (should be 1)
+          LB_COUNT=$(sudo k3s kubectl get pods -l app=load-balancer --no-headers 2>/dev/null | wc -l)
+          echo "✓ Found $LB_COUNT load-balancer pod(s) (expected: 1)"
+          
+          # Check low-cost pods (should be 3)
+          LOW_COUNT=$(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers 2>/dev/null | wc -l)
+          echo "✓ Found $LOW_COUNT llama-low-cost pod(s) (expected: 3)"
+          
+          # Check high-cost pods (should be 2)  
+          HIGH_COUNT=$(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers 2>/dev/null | wc -l)
+          echo "✓ Found $HIGH_COUNT llama-high-cost pod(s) (expected: 2)"
+          
+          TOTAL_LLAMA=$((LOW_COUNT + HIGH_COUNT))
+          echo "✓ Total Llama pods: $TOTAL_LLAMA (expected: 5)"
 
       - name: Wait for Pod Readiness
         run: |
@@ -170,7 +192,8 @@ jobs:
           timeout 120 bash -c 'until sudo k3s kubectl get pods -l app=load-balancer -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
           
           echo "Waiting for llama-api-server pods to be ready..."
-          timeout 120 bash -c 'until sudo k3s kubectl get pods -l app=llama-api-server -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
+          timeout 120 bash -c 'until sudo k3s kubectl get pods -l app=llama-low-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
+          timeout 120 bash -c 'until sudo k3s kubectl get pods -l app=llama-high-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
           
           echo "All pods should be running now:"
           sudo k3s kubectl get pods
@@ -203,8 +226,10 @@ jobs:
           echo "OK: Load balancer container is ready"
           
           echo "=== LLAMA-API-SERVER PODS HEALTH CHECKS ==="
-          # Get all llama-api-server pods
-          LLAMA_PODS=$(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name" | tr '\n' ' ')
+          # Get all llama pods (both low-cost and high-cost)
+          LLAMA_LOW_PODS=$(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name" | tr '\n' ' ')
+          LLAMA_HIGH_PODS=$(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name" | tr '\n' ' ')
+          LLAMA_PODS="$LLAMA_LOW_PODS $LLAMA_HIGH_PODS"
           echo "Llama API Server Pods: $LLAMA_PODS"
           
           for POD in $LLAMA_PODS; do
@@ -274,6 +299,18 @@ jobs:
             fi
             echo "OK: $service endpoints found: $ENDPOINTS"
           done
+          
+          # Test 4: Verify service weights and labels (from YAML annotations)
+          echo "Test 4: Verifying service weights and load balancer labels"
+          LOW_WEIGHT=$(sudo k3s kubectl get service llama-low-cost-service -o jsonpath='{.metadata.annotations.llamaedge/weight}' 2>/dev/null || echo "unknown")
+          HIGH_WEIGHT=$(sudo k3s kubectl get service llama-high-cost-service -o jsonpath='{.metadata.annotations.llamaedge/weight}' 2>/dev/null || echo "unknown")
+          echo "✓ llama-low-cost-service weight: $LOW_WEIGHT (expected: 3)"
+          echo "✓ llama-high-cost-service weight: $HIGH_WEIGHT (expected: 1)"
+          
+          LOW_TARGET=$(sudo k3s kubectl get service llama-low-cost-service -o jsonpath='{.metadata.labels.llamaedge/target}' 2>/dev/null || echo "unknown")
+          HIGH_TARGET=$(sudo k3s kubectl get service llama-high-cost-service -o jsonpath='{.metadata.labels.llamaedge/target}' 2>/dev/null || echo "unknown")
+          echo "✓ llama-low-cost-service target label: $LOW_TARGET (expected: true)"
+          echo "✓ llama-high-cost-service target label: $HIGH_TARGET (expected: true)"
 
       - name: Generate Pod Health Report
         run: |
@@ -293,8 +330,18 @@ jobs:
           echo "" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
           
           echo "## Llama API Server Pods Status" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          LLAMA_PODS=$(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name")
-          for POD in $LLAMA_PODS; do
+          LLAMA_LOW_PODS=$(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name")
+          LLAMA_HIGH_PODS=$(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name")
+          
+          echo "### Low-Cost Pods (3 replicas)" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
+          for POD in $LLAMA_LOW_PODS; do
+            echo "- Pod Name: $POD" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
+            echo "  - Status: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.phase}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
+            echo "  - Ready: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
+          done
+          
+          echo "### High-Cost Pods (2 replicas)" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
+          for POD in $LLAMA_HIGH_PODS; do
             echo "- Pod Name: $POD" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
             echo "  - Status: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.phase}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
             echo "  - Ready: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
@@ -433,7 +480,14 @@ jobs:
           sudo k3s kubectl get pods --all-namespaces | tee "logs/sequential-test-logs/pods/all_pods_post_sequential_${TIMESTAMP}.log"
           
           # Get llama-api-server pods logs after sequential test
-          for pod in $(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
+          for pod in $(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
+            if [ -n "$pod" ]; then
+              echo "Getting post-sequential logs for pod: $pod"
+              sudo k3s kubectl logs "$pod" > "logs/sequential-test-logs/pods/pod_${pod}_post_sequential_${TIMESTAMP}.log" 2>/dev/null || true
+            fi
+          done
+          
+          for pod in $(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
             if [ -n "$pod" ]; then
               echo "Getting post-sequential logs for pod: $pod"
               sudo k3s kubectl logs "$pod" > "logs/sequential-test-logs/pods/pod_${pod}_post_sequential_${TIMESTAMP}.log" 2>/dev/null || true
@@ -584,7 +638,14 @@ jobs:
           sudo k3s kubectl describe pods --all-namespaces | tee "logs/concurrent-test-logs/pods/pod_descriptions_post_concurrent_${TIMESTAMP}.log"
           
           # Get llama-api-server pods logs after concurrent test
-          for pod in $(sudo k3s kubectl get pods -l app=llama-api-server --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
+          for pod in $(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
+            if [ -n "$pod" ]; then
+              echo "Getting post-concurrent logs for pod: $pod"
+              sudo k3s kubectl logs "$pod" > "logs/concurrent-test-logs/pods/pod_${pod}_post_concurrent_${TIMESTAMP}.log" 2>/dev/null || true
+            fi
+          done
+          
+          for pod in $(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
             if [ -n "$pod" ]; then
               echo "Getting post-concurrent logs for pod: $pod"
               sudo k3s kubectl logs "$pod" > "logs/concurrent-test-logs/pods/pod_${pod}_post_concurrent_${TIMESTAMP}.log" 2>/dev/null || true
@@ -621,6 +682,6 @@ jobs:
           # Delete kubernetes resources
           echo "Deleting Kubernetes resources..."
           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml 2>/dev/null || true
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services.yaml 2>/dev/null || true
+          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml 2>/dev/null || true
           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml 2>/dev/null || true
           echo "Cleanup completed"
