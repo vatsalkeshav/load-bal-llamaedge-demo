@@ -48,25 +48,6 @@ jobs:
           curl -sfL https://get.k3s.io | sh -
           sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
 
-
-
-          
-      - name: Build load-balancer-llamaedge.wasm
-        run: |
-            cd $GITHUB_WORKSPACE/load-balancer-llamaedge
-            RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" cargo build --release --target wasm32-wasip1
-
-      - name: Build the load-balancer-llamaedge.wasm's OCI image and import it to k3s' containerd
-        run: |
-            cargo install oci-tar-builder
-            oci-tar-builder --name load-balancer-llamaedge \
-                --repo ghcr.io/second-state \
-                --tag latest \
-                --module target/wasm32-wasip1/release/load-balancer-llamaedge.wasm \
-                -o target/wasm32-wasip1/release/img-oci.tar # Create OCI image from the WASM binary
-            sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-            sudo k3s ctr images ls # verify the import
-
       - name: Build LlamaEdge's llama-api-server.wasm
         run: |
           git clone https://github.com/second-state/runwasi-wasmedge-demo.git
@@ -80,6 +61,21 @@ jobs:
           git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
 
           OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
+
+      - name: Build load-balancer-llamaedge.wasm
+        run: |
+            cd $GITHUB_WORKSPACE/load-balancer-llamaedge
+            RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" cargo build --release --target wasm32-wasip1
+
+      - name: Build the load-balancer-llamaedge.wasm's OCI image and import it to k3s' containerd
+        run: |
+            oci-tar-builder --name load-balancer-llamaedge \
+                --repo ghcr.io/second-state \
+                --tag latest \
+                --module target/wasm32-wasip1/release/load-balancer-llamaedge.wasm \
+                -o target/wasm32-wasip1/release/img-oci.tar # Create OCI image from the WASM binary
+            sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
+            sudo k3s ctr images ls # verify the import
 
       - name: Build the llama-api-server.wasm's OCI image and import it to k3s' containerd
         run: |
@@ -102,7 +98,7 @@ jobs:
           curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf
           curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
 
-      - name: Create and apply necessary yaml's
+      - name: Create and apply necessary yaml's - for load-balancer, backend-llamaedge-api-servers and service-watcher
         run: |
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services.yaml
@@ -117,11 +113,6 @@ jobs:
           echo "Port-forward PID: $PF_PID"
           echo "PORTER_PID=$PF_PID" >> $GITHUB_ENV
           sleep 6
-      
-
-
-
-
 
       - name: Test API endpoint and log the output
         run: |
@@ -162,8 +153,8 @@ jobs:
           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml 2>/dev/null || true
           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services.yaml 2>/dev/null || true
           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml 2>/dev/null || true
-          # Show final status
-          sudo k3s kubectl get pods -l app=llama-api-server || true
+        #   Show final status
+        #   sudo k3s kubectl get pods -l app=llama-api-server || true
 
 
 
