@@ -27,7 +27,6 @@ curl -sfL https://get.k3s.io | sh -
 sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
 ```
 
-
 ### 2. Building image ghcr.io/second-state/llama-api-server:latest
 This step builds the `ghcr.io/second-state/llama-api-server:latest` image and imports it to the k3s' containerd's local image store
 
@@ -76,7 +75,6 @@ oci-tar-builder --name load-balancer-llamaedge \
 sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
 sudo k3s ctr images ls # verify the import
 ```
-
 
 
 ### 4. Download the gguf model needed by llama-api-server

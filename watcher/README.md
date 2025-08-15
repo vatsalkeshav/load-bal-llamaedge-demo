@@ -2,14 +2,14 @@
 ```sh
 cargo build
 # or build image using Dockerfile :
-docker build -t vatsalkeshav/watcher:0.08 . 
+docker build -t vatsalkeshav/watcher:0.09 . 
 ```
 
 ### 2. Or use pre-built image
 ```sh
-docker image pull vatsalkeshav/watcher:0.08
+docker image pull vatsalkeshav/watcher:0.09
 # or
-ctr image pull vatsalkeshav/watcher:0.08
+ctr image pull vatsalkeshav/watcher:0.09
 ```
 
 ### 3. Deploy the service-watcher
