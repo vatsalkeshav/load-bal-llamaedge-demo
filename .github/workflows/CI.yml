@@ -52,7 +52,9 @@ jobs:
         run: |
             sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.91
             sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
+            sleep 30
             sudo k3s kubectl get all
+            kubectl describe deployment service-watcher
 
     #   - name: Build and install Runwasi's containerd-shim-wasmedge-v1
     #     run: |
