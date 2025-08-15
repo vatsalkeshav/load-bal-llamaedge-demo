@@ -48,6 +48,13 @@ jobs:
           curl -sfL https://get.k3s.io | sh -
           sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
 
+
+
+
+
+
+
+
       - name: Build LlamaEdge's llama-api-server.wasm
         run: |
             cd $HOME
@@ -62,6 +69,24 @@ jobs:
             git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
             rustup target add wasm32-wasip1
             OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
+
+      - name: Build the llama-api-server.wasm's OCI image and import it to k3s' containerd
+        run: |
+          cd apps/llamaedge/llama-api-server
+          oci-tar-builder --name llama-api-server \
+            --repo ghcr.io/second-state \
+            --tag latest \
+            --module target/wasm32-wasip1/release/llama-api-server.wasm \
+            -o target/wasm32-wasip1/release/img-oci.tar
+          sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
+
+          sudo k3s ctr images ls # verify image import
+
+
+
+
+
+
 
       - name: Build load-balancer-llamaedge.wasm
         run: |
@@ -78,18 +103,11 @@ jobs:
             sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
             sudo k3s ctr images ls # verify the import
 
-      - name: Build the llama-api-server.wasm's OCI image and import it to k3s' containerd
-        run: |
-          cd apps/llamaedge/llama-api-server
-          oci-tar-builder --name llama-api-server \
-            --repo ghcr.io/second-state \
-            --tag latest \
-            --module target/wasm32-wasip1/release/llama-api-server.wasm \
-            -o target/wasm32-wasip1/release/img-oci.tar
-          sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
 
-          sudo k3s ctr images ls # verify image import
 
+
+
+            
       - name: Download gguf model
         run: |
           sudo mkdir -p $HOME/models
