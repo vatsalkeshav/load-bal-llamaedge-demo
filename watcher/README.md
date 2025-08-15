@@ -8,9 +8,9 @@ docker build -t vatsalkeshav/watcher:0.09 .
 
 ### 2. Or use pre-built image
 ```sh
-docker image pull vatsalkeshav/watcher:0.09
+docker image pull docker.io/vatsalkeshav/watcher:0.91
 # or
-ctr image pull vatsalkeshav/watcher:0.09
+ctr image pull dokcer.io/vatsalkeshav/watcher:0.91
 ```
 
 ### 3. Deploy the service-watcher

@@ -104,7 +104,7 @@ jobs:
 
       - name: Download watcher's docker image
         run: |
-            sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.09
+            sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.91
 
       - name: Download gguf model
         run: |
