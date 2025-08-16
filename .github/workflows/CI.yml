@@ -108,19 +108,6 @@ jobs:
           curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
           curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf
           # curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
-          ls -la /home/runner/models/
-        
-          REQUIRED_MODELS=(
-            "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"
-            "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"
-          )
-          for model in "${REQUIRED_MODELS[@]}"; do
-            if [ -f "$model" ]; then
-              echo "Model found: $model"
-            else
-              echo "Missing model: $model"
-              exit 1
-            fi
 
       - name: Create and apply necessary yaml's - for load-balancer, backend-llamaedge-api-servers and service-watcher
         run: |
