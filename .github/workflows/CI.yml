@@ -231,7 +231,7 @@ jobs:
         run: |
             #!/bin/bash
 
-            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+            LB_POD=$(sudo k3s kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
             LOG_FILE="logs/lb_pod_logs_combined.md"
             NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -261,7 +261,7 @@ jobs:
             } >> "$LOG_FILE"
 
             # append new logs
-            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+            sudo k3s kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
 
             # save last timestamp marker inside same file
             echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
@@ -396,7 +396,7 @@ jobs:
         run: |
             #!/bin/bash
 
-            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+            LB_POD=$(sudo k3s kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
             LOG_FILE="logs/lb_pod_logs_combined.md"
             NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -426,7 +426,7 @@ jobs:
             } >> "$LOG_FILE"
 
             # append new logs
-            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+            sudo k3s kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
 
             # save last timestamp marker inside same file
             echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
@@ -585,7 +585,7 @@ jobs:
         run: |
             #!/bin/bash
 
-            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+            LB_POD=$(sudo k3s kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
             LOG_FILE="logs/lb_pod_logs_combined.md"
             NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -615,7 +615,7 @@ jobs:
             } >> "$LOG_FILE"
 
             # append new logs
-            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+            sudo k3s kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
 
             # save last timestamp marker inside same file
             echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
@@ -808,6 +808,9 @@ jobs:
           name: test-logs-${{ github.run_number }}-${{ github.run_attempt }}
           path: logs/
           retention-days: 7
+
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
 
       - name: Cleanup
         if: always()
