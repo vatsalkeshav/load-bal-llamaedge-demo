@@ -51,6 +51,6 @@ sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.t
 sudo k3s ctr images ls
 
 cd
-cp -R /mnt/mac/Users/dev/load-bal-someplace/models .
+cp -R /mnt/mac/Users/dev/iheartzigang/models .
 chmod -R 777 models
 

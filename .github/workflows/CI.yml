@@ -25,19 +25,18 @@ jobs:
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-            toolchain: 1.88.0
             target: wasm32-wasip1
             cache: false
 
       - name: Install WasmEdge with WASI-NN plugin
         run: |
           curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- --plugins wasi_nn-ggml -v 0.14.1
+          wasmedge --version # verify
           
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y bc
-          echo "System dependencies installed successfully"
       
       - name: Build and install Runwasi's containerd-shim-wasmedge-v1
         run: |
@@ -48,20 +47,19 @@ jobs:
           make build-wasmedge
           INSTALL="sudo install" LN="sudo ln -sf" make install-wasmedge
           source ~/.bashrc
-          which containerd-shim-wasmedge-v1 # verify installation
+          which containerd-shim-wasmedge-v1 # verify
 
       - name: Install k3s
         run: |
           cd $HOME
           curl -sfL https://get.k3s.io | sh -
           sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
-          # Verify k3s installation
-          sudo k3s --version
-          echo "K3s installed successfully"
+          sudo k3s --version # verify
 
       - name: Download service-watcher's docker image
         run: |
             sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.91
+            sudo k3s ctr images ls | grep "vatsalkeshav/watcher:0.91" # verify
 
       - name: Build and import LlamaEdge's llama-api-server's wasm img
         run: |
@@ -86,7 +84,7 @@ jobs:
                 --module target/wasm32-wasip1/release/llama-api-server.wasm \
                 -o target/wasm32-wasip1/release/img-oci.tar
             sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-            sudo k3s ctr images ls # verify image import
+            sudo k3s ctr images ls | grep "ghcr.io/second-state/llama-api-server:latest" # verify
 
       - name: Build and import load-balancer's wasm img
         run: |
@@ -100,7 +98,7 @@ jobs:
                 --module target/wasm32-wasip1/release/load-balancer-llamaedge.wasm \
                 -o target/wasm32-wasip1/release/img-oci.tar # Create OCI image from the WASM binary
             sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-            sudo k3s ctr images ls # verify the import
+            sudo k3s ctr images ls | grep "ghcr.io/second-state/load-balancer-llamaedge:latest" # verify
             
       - name: Download gguf model
         run: |
@@ -111,629 +109,78 @@ jobs:
           curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf
           # curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
           ls -la /home/runner/models/
-          
-        #   # Verify the models that will be used match the YAML configurations
-        #   echo "Verifying model files for YAML configurations..."
-        #   REQUIRED_MODELS=(
-        #     "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"  # Used by low-cost pods
-        #     "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"  # Used by high-cost pods
-        #   )
-        #   for model in "${REQUIRED_MODELS[@]}"; do
-        #     if [ -f "$model" ]; then
-        #       echo "✓ Model found: $model"
-        #     else
-        #       echo "✗ Missing model: $model"
-        #       exit 1
-        #     fi
-        #   done
+        
+          REQUIRED_MODELS=(
+            "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"  # Used by low-cost pods
+            "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"  # Used by high-cost pods
+          )
+          for model in "${REQUIRED_MODELS[@]}"; do
+            if [ -f "$model" ]; then
+              echo "Model found: $model"
+            else
+              echo "Missing model: $model"
+              exit 1
+            fi
 
       - name: Create and apply necessary yaml's - for load-balancer, backend-llamaedge-api-servers and service-watcher
         run: |
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
-
           sleep 30
-          echo "Current pod/service status:"
-          sudo k3s kubectl get all
-          sudo k3s kubectl describe deployment llama-high-cost
-          sudo k3s kubectl describe deployment llama-low-cost
-          sudo k3s kubectl describe deployment load-balancer
 
-    #   - name: Wait for Pod Readiness
-    #     run: |
-    #       echo "Waiting for load balancer pod to be ready..."
-    #       timeout 180 bash -c 'until sudo k3s kubectl get pods -l app=load-balancer -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
-          
-    #       echo "Waiting for llama-api-server pods to be ready..."
-    #       timeout 180 bash -c 'until sudo k3s kubectl get pods -l app=llama-low-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
-    #       timeout 180 bash -c 'until sudo k3s kubectl get pods -l app=llama-high-cost -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
-          
-    #       echo "Waiting for service-watcher pod to be ready..."
-    #       timeout 180 bash -c 'until sudo k3s kubectl get pods -l app=service-watcher -o jsonpath="{.items[0].status.phase}" | grep -q "Running"; do sleep 5; done'
-          
-    #       echo "Waiting for all pods to be fully ready..."
-    #       timeout 180 bash -c 'until [ $(sudo k3s kubectl get pods -l "app in (llama-low-cost,llama-high-cost,load-balancer,service-watcher)" --field-selector=status.phase=Running --no-headers | wc -l) -eq 7 ]; do echo "Waiting for all 7 pods..."; sleep 10; done'
-          
-    #       echo "All pods should be running now:"
-    #       sudo k3s kubectl get pods
-
-      - name: Pod Health and Readiness Tests
+      - name: Service Health Check
         run: |
-          mkdir -p logs/health-tests-logs
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          
-          echo "=== LOAD BALANCER POD HEALTH CHECKS ==="
-          LB_POD=$(sudo k3s kubectl get pods -l app=load-balancer --no-headers -o custom-columns=":metadata.name" | head -n 1)
-          echo "Load Balancer Pod: $LB_POD"
-          
-          # Test 1: Load balancer pod running status
-          echo "Test 1: Verifying load balancer pod running status"
-          if [ "$(sudo k3s kubectl get pod $LB_POD -o jsonpath='{.status.phase}')" != "Running" ]; then
-            echo "ERROR: Load balancer pod is not running"
-            sudo k3s kubectl describe pod $LB_POD | tee "logs/health-tests-logs/lb_pod_error_${TIMESTAMP}.log"
-            exit 1
-          fi
-          echo "OK: Load balancer pod is running"
-          
-          # Test 2: Load balancer container readiness
-          echo "Test 2: Checking load balancer container readiness"
-          if [ "$(sudo k3s kubectl get pod $LB_POD -o jsonpath='{.status.containerStatuses[0].ready}')" != "true" ]; then
-            echo "ERROR: Load balancer container is not ready"
-            sudo k3s kubectl describe pod $LB_POD | tee "logs/health-tests-logs/lb_container_error_${TIMESTAMP}.log"
-            exit 1
-          fi
-          echo "OK: Load balancer container is ready"
-          
-          echo "=== LLAMA-API-SERVER PODS HEALTH CHECKS ==="
-          # Get all llama pods (both low-cost and high-cost)
-          LLAMA_LOW_PODS=$(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name" | tr '\n' ' ')
-          LLAMA_HIGH_PODS=$(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name" | tr '\n' ' ')
-          LLAMA_PODS="$LLAMA_LOW_PODS $LLAMA_HIGH_PODS"
-          echo "Llama API Server Pods: $LLAMA_PODS"
-          
-          for POD in $LLAMA_PODS; do
-            echo "Testing pod: $POD"
-            
-            # Test 3: Each llama pod running status
-            echo "Test 3: Verifying pod $POD running status"
-            if [ "$(sudo k3s kubectl get pod $POD -o jsonpath='{.status.phase}')" != "Running" ]; then
-              echo "ERROR: Pod $POD is not running"
-              sudo k3s kubectl describe pod $POD | tee "logs/health-tests-logs/${POD}_error_${TIMESTAMP}.log"
-              exit 1
-            fi
-            echo "OK: Pod $POD is running"
-            
-            # Test 4: Each container readiness
-            echo "Test 4: Checking container readiness for $POD"
-            if [ "$(sudo k3s kubectl get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}')" != "true" ]; then
-              echo "ERROR: Container in pod $POD is not ready"
-              sudo k3s kubectl describe pod $POD | tee "logs/health-tests-logs/${POD}_container_error_${TIMESTAMP}.log"
-              exit 1
-            fi
-            echo "OK: Container in pod $POD is ready"
-            
-            # Test 5: Check for warning events
-            echo "Test 5: Checking pod events for $POD"
-            EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name=$POD --no-headers | grep -v Normal || true)
-            if [ -n "$EVENTS" ]; then
-              echo "WARNING: Warning events found for pod $POD:"
-              echo "$EVENTS" | tee "logs/health-tests-logs/${POD}_events_${TIMESTAMP}.log"
-            else
-              echo "OK: No warning events found for pod $POD"
-            fi
-          done
+            echo "## Service Endpoints" >> "$LOG_FILE"
+            kubectl get endpoints -o json | jq -r '
+            .items[] |
+            "- \(.metadata.name): " +
+            ([
+                .subsets[]?.addresses[]?.ip
+            ] | join(" "))
+            ' >> "$LOG_FILE"
 
-          echo "=== SERVICE-WATCHER POD HEALTH CHECKS ==="
-          WATCHER_POD=$(sudo k3s kubectl get pods -l app=service-watcher --no-headers -o custom-columns=":metadata.name" | head -n 1)
-          echo "Service Watcher Pod: $WATCHER_POD"
-          
-          # Test 6: Service watcher pod running status
-          echo "Test 6: Verifying service watcher pod running status"
-          if [ "$(sudo k3s kubectl get pod $WATCHER_POD -o jsonpath='{.status.phase}')" != "Running" ]; then
-            echo "ERROR: Service watcher pod is not running"
-            sudo k3s kubectl describe pod $WATCHER_POD | tee "logs/health-tests-logs/watcher_pod_error_${TIMESTAMP}.log"
-            exit 1
-          fi
-          echo "OK: Service watcher pod is running"
-          
-          # Test 7: Service watcher container readiness
-          echo "Test 7: Checking service watcher container readiness"
-          if [ "$(sudo k3s kubectl get pod $WATCHER_POD -o jsonpath='{.status.containerStatuses[0].ready}')" != "true" ]; then
-            echo "ERROR: Service watcher container is not ready"
-            sudo k3s kubectl describe pod $WATCHER_POD | tee "logs/health-tests-logs/watcher_container_error_${TIMESTAMP}.log"
-            exit 1
-          fi
-          echo "OK: Service watcher container is ready"
-          
-          # Test 8: Check for warning events on watcher
-          echo "Test 8: Checking service watcher pod events"
-          WATCHER_EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name=$WATCHER_POD --no-headers | grep -v Normal || true)
-          if [ -n "$WATCHER_EVENTS" ]; then
-            echo "WARNING: Warning events found for service watcher pod:"
-            echo "$WATCHER_EVENTS" | tee "logs/health-tests-logs/watcher_events_${TIMESTAMP}.log"
-          else
-            echo "OK: No warning events found for service watcher pod"
-          fi
-          
-          # Test 9: Check watcher logs for any obvious errors
-          echo "Test 9: Checking service watcher logs for errors"
-          WATCHER_LOGS=$(sudo k3s kubectl logs $WATCHER_POD --tail=20 2>/dev/null || echo "No logs available")
-          echo "Recent watcher logs:" | tee "logs/health-tests-logs/watcher_logs_${TIMESTAMP}.log"
-          echo "$WATCHER_LOGS" | tee -a "logs/health-tests-logs/watcher_logs_${TIMESTAMP}.log"
-          
-          # Check for error patterns in logs
-          if echo "$WATCHER_LOGS" | grep -i "error\|failed\|panic" >/dev/null 2>&1; then
-            echo "WARNING: Potential errors found in watcher logs"
-          else
-            echo "OK: No obvious errors in watcher logs"
-          fi
+      - name: Collect pods' Health (Pre-Sequential Test)
+        run: |
+            #!/bin/bash
+            set -euo pipefail
 
-      - name: Service and Network Health Checks
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          echo "=== SERVICE HEALTH CHECKS ==="
-          
-          # Test 1: Verify load balancer service exists
-          echo "Test 1: Verifying load-balancer-service exists"
-          sudo k3s kubectl get service load-balancer-service || { echo "ERROR: load-balancer-service not found"; exit 1; }
-          echo "OK: load-balancer-service exists"
-          
-          # Test 2: Check load balancer service endpoints
-          echo "Test 2: Checking load-balancer-service endpoints"
-          LB_ENDPOINTS=$(sudo k3s kubectl get endpoints load-balancer-service -o jsonpath='{.subsets[*].addresses[*].ip}')
-          if [ -z "$LB_ENDPOINTS" ]; then
-            echo "ERROR: No endpoints found for load-balancer-service"
-            sudo k3s kubectl describe endpoints load-balancer-service | tee "logs/health-tests-logs/lb_endpoints_error_${TIMESTAMP}.log"
-            exit 1
-          fi
-          echo "OK: Load balancer endpoints found: $LB_ENDPOINTS"
-          
-          # Test 3: Verify llama services exist
-          echo "Test 3: Verifying llama API server services exist"
-          for service in llama-low-cost-service llama-high-cost-service; do
-            sudo k3s kubectl get service $service || { echo "ERROR: $service not found"; exit 1; }
-            echo "OK: $service exists"
-            
-            # Check service endpoints
-            ENDPOINTS=$(sudo k3s kubectl get endpoints $service -o jsonpath='{.subsets[*].addresses[*].ip}')
-            if [ -z "$ENDPOINTS" ]; then
-              echo "ERROR: No endpoints found for $service"
-              sudo k3s kubectl describe endpoints $service | tee "logs/health-tests-logs/${service}_endpoints_error_${TIMESTAMP}.log"
-              exit 1
-            fi
-            echo "OK: $service endpoints found: $ENDPOINTS"
-          done
-          
-          # Test 4: Verify service weights and labels (from YAML annotations)
-          echo "Test 4: Verifying service weights and load balancer labels"
-          LOW_WEIGHT=$(sudo k3s kubectl get service llama-low-cost-service -o jsonpath='{.metadata.annotations.llamaedge/weight}' 2>/dev/null || echo "unknown")
-          HIGH_WEIGHT=$(sudo k3s kubectl get service llama-high-cost-service -o jsonpath='{.metadata.annotations.llamaedge/weight}' 2>/dev/null || echo "unknown")
-          echo "✓ llama-low-cost-service weight: $LOW_WEIGHT (expected: 3)"
-          echo "✓ llama-high-cost-service weight: $HIGH_WEIGHT (expected: 1)"
-          
-          LOW_TARGET=$(sudo k3s kubectl get service llama-low-cost-service -o jsonpath='{.metadata.labels.llamaedge/target}' 2>/dev/null || echo "unknown")
-          HIGH_TARGET=$(sudo k3s kubectl get service llama-high-cost-service -o jsonpath='{.metadata.labels.llamaedge/target}' 2>/dev/null || echo "unknown")
-          echo "✓ llama-low-cost-service target label: $LOW_TARGET (expected: true)"
-          echo "✓ llama-high-cost-service target label: $HIGH_TARGET (expected: true)"
+            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+            LOG_FILE="pod_health_report_${TIMESTAMP}.log"
 
-      - name: Generate Pod Health Report
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          mkdir -p logs/health-tests-logs
-          
-          # Collect pod information
-          echo "=== POD HEALTH REPORT - $TIMESTAMP ===" > "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "Generated at: $(date)" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          
-          echo "## Load Balancer Pod Status" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          LB_POD=$(sudo k3s kubectl get pods -l app=load-balancer --no-headers -o custom-columns=":metadata.name" | head -n 1)
-          echo "- Pod Name: $LB_POD" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "- Status: $(sudo k3s kubectl get pod $LB_POD -o jsonpath='{.status.phase}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "- Ready: $(sudo k3s kubectl get pod $LB_POD -o jsonpath='{.status.containerStatuses[0].ready}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          
-          echo "## Llama API Server Pods Status" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          LLAMA_LOW_PODS=$(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name")
-          LLAMA_HIGH_PODS=$(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name")
-          
-          echo "### Low-Cost Pods (3 replicas)" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          for POD in $LLAMA_LOW_PODS; do
-            echo "- Pod Name: $POD" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-            echo "  - Status: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.phase}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-            echo "  - Ready: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          done
-          
-          echo "### High-Cost Pods (2 replicas)" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          for POD in $LLAMA_HIGH_PODS; do
-            echo "- Pod Name: $POD" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-            echo "  - Status: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.phase}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-            echo "  - Ready: $(sudo k3s kubectl get pod $POD -o jsonpath='{.status.containerStatuses[0].ready}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          done
-          echo "" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          
-          echo "## Service Watcher Pod Status" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          WATCHER_POD=$(sudo k3s kubectl get pods -l app=service-watcher --no-headers -o custom-columns=":metadata.name" | head -n 1)
-          echo "- Pod Name: $WATCHER_POD" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "- Status: $(sudo k3s kubectl get pod $WATCHER_POD -o jsonpath='{.status.phase}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "- Ready: $(sudo k3s kubectl get pod $WATCHER_POD -o jsonpath='{.status.containerStatuses[0].ready}')" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "- Service Account: watcher-sa" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "- RBAC Role: watcher-role (ClusterRole for service monitoring)" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          echo "" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          
-          echo "## Service Endpoints" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          for service in load-balancer-service llama-low-cost-service llama-high-cost-service; do
-            ENDPOINTS=$(sudo k3s kubectl get endpoints $service -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || echo "N/A")
-            echo "- $service: $ENDPOINTS" >> "logs/health-tests-logs/pod_health_report_${TIMESTAMP}.md"
-          done
-          
-          echo "All health checks passed! System is ready for load testing."
-          
-      - name: Port-forward from k3s in background
-        run: |
-          echo "Starting port-forward to load-balancer-service..."
-          sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080 > /dev/null 2>&1 &
-          PF_PID=$!
-          echo "Port-forward PID: $PF_PID"
-          echo "PORTER_PID=$PF_PID" >> $GITHUB_ENV
-          echo "$PF_PID" > /tmp/port_forward_pid
-          sleep 6
-          echo "Port-forward established successfully"
-          
-          # Test connectivity to the load balancer
-          echo "Testing connectivity to load balancer..."
-          for i in {1..5}; do
-            if curl -s -f http://localhost:8080/health 2>/dev/null || curl -s -f http://localhost:8080/ 2>/dev/null; then
-              echo "✓ Load balancer is responding"
-              break
-            else
-              echo "Attempt $i: Load balancer not yet ready, waiting..."
-              sleep 2
-            fi
-          done
-
-      - name: Run Sequential Load Test (10 requests)
-        run: |
-          mkdir -p logs/sequential-test-logs
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          LOG_FILE="logs/sequential-test-logs/sequential_test_${TIMESTAMP}.log"
-          RESPONSES_FILE="logs/sequential-test-logs/all_responses_${TIMESTAMP}.json"
-          
-          echo "Starting sequential test at $(date)" | tee "$LOG_FILE"
-          echo "========================================" | tee -a "$LOG_FILE"
-          
-          # Initialize responses file as JSON array
-          echo "[" > "$RESPONSES_FILE"
-          
-          SUCCESS_COUNT=0
-          for i in {1..10}; do
-              echo "=== Request $i ===" | tee -a "$LOG_FILE"
-              echo "Timestamp: $(date +'%H:%M:%S.%3N')" | tee -a "$LOG_FILE"
-              
-              # Capture both response and timing info
-              response=$(curl -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
-                  -X POST http://localhost:8080/v1/chat/completions \
-                  -H 'Content-Type: application/json' \
-                  -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
-                  --silent --show-error 2>&1)
-              
-              # Check if request was successful
-              if echo "$response" | grep -q "HTTP_CODE:200"; then
-                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-                echo "✓ Request $i successful" | tee -a "$LOG_FILE"
-              else
-                echo "✗ Request $i failed" | tee -a "$LOG_FILE"
-              fi
-              
-              # Extract just the JSON response (without timing info)
-              json_response=$(echo "$response" | head -n -2 2>/dev/null || echo "{\"error\": \"Failed to parse response\"}")
-              
-              # Log the full response to log file
-              echo "$response" | tee -a "$LOG_FILE"
-              echo -e "\n---\n" | tee -a "$LOG_FILE"
-              
-              # Add JSON response to combined file
-              if [ $i -gt 1 ]; then
-                echo "," >> "$RESPONSES_FILE"
-              fi
-              echo "  {" >> "$RESPONSES_FILE"
-              echo "    \"request_number\": $i," >> "$RESPONSES_FILE"
-              echo "    \"timestamp\": \"$(date +'%H:%M:%S.%3N')\"," >> "$RESPONSES_FILE"
-              echo "    \"response\": $json_response" >> "$RESPONSES_FILE"
-              echo "  }" | tr '\n' ' ' >> "$RESPONSES_FILE"
-              
-              sleep 0.5
-          done
-          
-          # Close JSON array
-          echo "" >> "$RESPONSES_FILE"
-          echo "]" >> "$RESPONSES_FILE"
-          
-          echo "Sequential test completed at $(date)" | tee -a "$LOG_FILE"
-          echo "Successful requests: $SUCCESS_COUNT out of 10" | tee -a "$LOG_FILE"
-          echo "All responses saved to: $RESPONSES_FILE"
-
-      - name: Check Load Balancer Logs (Post-Sequential Test)
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          echo "Fetching load balancer logs after sequential test..."
-          LB_POD=$(sudo k3s kubectl get pods -l app=load-balancer -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-          if [ -n "$LB_POD" ]; then
-            echo "Load balancer pod: $LB_POD"
-            
-            # Get full logs after sequential test
-            sudo k3s kubectl logs "$LB_POD" | tee "logs/sequential-test-logs/sequential_load_balancer_logs_${TIMESTAMP}.log"
-            
+            {
+            echo "=== POD HEALTH REPORT - ${TIMESTAMP} ==="
+            echo "Generated at: $(date -u)"
             echo ""
-            echo "=========================================="
-            echo "LAST 20 LINES OF LOAD BALANCER LOGS (POST-SEQUENTIAL):"
-            echo "=========================================="
-            
-            # Display and log last 20 lines to show load balancing decisions
-            LAST_20_LINES=$(sudo k3s kubectl logs "$LB_POD" --tail=20)
-            echo "$LAST_20_LINES"
-            echo "$LAST_20_LINES" > "logs/sequential-test-logs/sequential_load_balancer_last_20_lines_${TIMESTAMP}.log"
-            
-            echo "=========================================="
-            echo "Sequential load balancing activity demonstrates:"
-            echo "- Service selection decisions"
-            echo "- Connection routing to backend services"
-            echo "- Weighted distribution in action"
-            echo "=========================================="
-          else
-            echo "No load balancer pod found"
-          fi
 
-      - name: Collect Pod Logs (Post-Sequential Test)
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          mkdir -p logs/sequential-test-logs/pods
-          
-          # Get all pod status after sequential test
-          sudo k3s kubectl get pods --all-namespaces | tee "logs/sequential-test-logs/pods/all_pods_post_sequential_${TIMESTAMP}.log"
-          
-          # Get llama-api-server pods logs after sequential test
-          for pod in $(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
-            if [ -n "$pod" ]; then
-              echo "Getting post-sequential logs for pod: $pod"
-              sudo k3s kubectl logs "$pod" > "logs/sequential-test-logs/pods/pod_${pod}_post_sequential_${TIMESTAMP}.log" 2>/dev/null || true
-            fi
-          done
-          
-          for pod in $(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
-            if [ -n "$pod" ]; then
-              echo "Getting post-sequential logs for pod: $pod"
-              sudo k3s kubectl logs "$pod" > "logs/sequential-test-logs/pods/pod_${pod}_post_sequential_${TIMESTAMP}.log" 2>/dev/null || true
-            fi
-          done
-          
-          # Get service-watcher logs after sequential test
-          for pod in $(sudo k3s kubectl get pods -l app=service-watcher --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
-            if [ -n "$pod" ]; then
-              echo "Getting post-sequential logs for service-watcher pod: $pod"
-              sudo k3s kubectl logs "$pod" > "logs/sequential-test-logs/pods/watcher_${pod}_post_sequential_${TIMESTAMP}.log" 2>/dev/null || true
-            fi
-          done
+            # List all pods
+            PODS=$(kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
 
-      - name: Run Concurrent Load Test (10 parallel requests)
-        run: |
-          mkdir -p logs/concurrent-test-logs
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          TEST_DIR="logs/concurrent-test-logs/load_test_concurrent_${TIMESTAMP}"
-          mkdir -p "$TEST_DIR"
-          
-          echo "Starting concurrent test at $(date)" | tee "$TEST_DIR/concurrent_test_summary.log"
-          echo "Test directory: $TEST_DIR" | tee -a "$TEST_DIR/concurrent_test_summary.log"
-          echo "========================================" | tee -a "$TEST_DIR/concurrent_test_summary.log"
-          
-          # Launch 10 concurrent requests
-          for i in {1..10}; do
-              (
-                  request_start=$(date +%s.%3N)
-                  echo "Request $i started at $(date +%H:%M:%S.%3N)" > "$TEST_DIR/request_${i}_log.txt"
-                  
-                  response=$(curl -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
-                      -X POST http://localhost:8080/v1/chat/completions \
-                      -H 'Content-Type: application/json' \
-                      -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
-                      --silent --show-error 2>"$TEST_DIR/request_${i}_error.log")
-                  
-                  request_end=$(date +%s.%3N)
-                  duration=$(echo "$request_end - $request_start" | bc -l)
-                  
-                  # Save response JSON (excluding HTTP status and timing)
-                  echo "$response" | head -n -2 > "$TEST_DIR/response_${i}.json" 2>/dev/null || echo "{\"error\": \"Failed to parse response\"}" > "$TEST_DIR/response_${i}.json"
-                  
-                  # Log completion details
-                  echo "Request $i completed at $(date +%H:%M:%S.%3N)" >> "$TEST_DIR/request_${i}_log.txt"
-                  echo "Duration: ${duration}s" >> "$TEST_DIR/request_${i}_log.txt"
-                  echo "$response" | tail -n 2 >> "$TEST_DIR/request_${i}_log.txt" 2>/dev/null || echo "Response parsing failed" >> "$TEST_DIR/request_${i}_log.txt"
-                  
-                  echo "Request $i completed (Duration: ${duration}s)" >> "$TEST_DIR/concurrent_test_summary.log"
-              ) &
-          done
-          
-          # Wait for all background jobs to complete with timeout
-          echo "Waiting for all concurrent requests to complete..."
-          timeout 600 bash -c 'wait' || echo "Some requests may have timed out"
-          
-          echo "Concurrent test completed at $(date)" | tee -a "$TEST_DIR/concurrent_test_summary.log"
-          echo "All 10 requests finished. Check individual files in $TEST_DIR" | tee -a "$TEST_DIR/concurrent_test_summary.log"
-          
-          # Count successful responses
-          SUCCESS_COUNT=$(find "$TEST_DIR" -name "response_*.json" -exec grep -l "choices\|content" {} \; 2>/dev/null | wc -l || echo "0")
-          echo "Successful responses: $SUCCESS_COUNT out of 10" | tee -a "$TEST_DIR/concurrent_test_summary.log"
-          
-          # List all created files
-          echo "Files created:" | tee -a "$TEST_DIR/concurrent_test_summary.log"
-          ls -la "$TEST_DIR"/ | tee -a "$TEST_DIR/concurrent_test_summary.log"
+            for POD in $PODS; do
+                NS=$(kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+                STATUS=$(kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+                READY=$(kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+                RESTARTS=$(kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
 
-      - name: Generate Final Test Summary
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          SUMMARY_FILE="logs/final_test_summary_${TIMESTAMP}.md"
-          
-          echo "# Load Balancer Test Results Summary" > "$SUMMARY_FILE"
-          echo "Generated at: $(date)" >> "$SUMMARY_FILE"
-          echo "" >> "$SUMMARY_FILE"
-          
-          echo "## Test Execution Overview" >> "$SUMMARY_FILE"
-          echo "- **Sequential Test**: 10 requests executed one by one" >> "$SUMMARY_FILE"
-          echo "- **Concurrent Test**: 10 requests executed in parallel" >> "$SUMMARY_FILE"
-          echo "- **Health Checks**: Pod and service validation completed" >> "$SUMMARY_FILE"
-          echo "" >> "$SUMMARY_FILE"
-          
-          echo "## Log File Structure" >> "$SUMMARY_FILE"
-          echo "\`\`\`" >> "$SUMMARY_FILE"
-          find logs/ -type f -name "*.log" -o -name "*.json" -o -name "*.md" | sort >> "$SUMMARY_FILE"
-          echo "\`\`\`" >> "$SUMMARY_FILE"
-          echo "" >> "$SUMMARY_FILE"
-          
-          echo "## Sequential Test Results" >> "$SUMMARY_FILE"
-          SEQUENTIAL_LOG=$(find logs/sequential-test-logs/ -name "sequential_test_*.log" | head -1)
-          if [ -f "$SEQUENTIAL_LOG" ]; then
-            SEQUENTIAL_SUCCESS=$(grep "Successful requests:" "$SEQUENTIAL_LOG" | tail -1 || echo "Unable to determine")
-            echo "- $SEQUENTIAL_SUCCESS" >> "$SUMMARY_FILE"
-          fi
-          echo "" >> "$SUMMARY_FILE"
-          
-          echo "## Concurrent Test Results" >> "$SUMMARY_FILE"
-          CONCURRENT_SUMMARY=$(find logs/concurrent-test-logs/ -name "concurrent_test_summary.log" | head -1)
-          if [ -f "$CONCURRENT_SUMMARY" ]; then
-            CONCURRENT_SUCCESS=$(grep "Successful responses:" "$CONCURRENT_SUMMARY" | tail -1 || echo "Unable to determine")
-            echo "- $CONCURRENT_SUCCESS" >> "$SUMMARY_FILE"
-          fi
-          echo "" >> "$SUMMARY_FILE"
-          
-          echo "## Health Check Status" >> "$SUMMARY_FILE"
-          HEALTH_REPORT=$(find logs/health-tests-logs/ -name "pod_health_report_*.md" | head -1)
-          if [ -f "$HEALTH_REPORT" ]; then
-            echo "- All health checks passed successfully" >> "$SUMMARY_FILE"
-            echo "  - Load Balancer Pod: ✓" >> "$SUMMARY_FILE"
-            echo "  - Llama API Server Pods (Low-Cost): ✓" >> "$SUMMARY_FILE"
-            echo "  - Llama API Server Pods (High-Cost): ✓" >> "$SUMMARY_FILE"
-            echo "  - Service Watcher Pod: ✓" >> "$SUMMARY_FILE"
-            echo "  - All Service Endpoints: ✓" >> "$SUMMARY_FILE"
-          else
-            echo "- Health check status unknown" >> "$SUMMARY_FILE"
-          fi
-          echo "" >> "$SUMMARY_FILE"
-          
-          echo "## Pod Status Summary" >> "$SUMMARY_FILE"
-          echo "- **Total Expected Pods**: 7 (1 Load Balancer + 3 Low-Cost + 2 High-Cost + 1 Service Watcher)" >> "$SUMMARY_FILE"
-          RUNNING_PODS=$(sudo k3s kubectl get pods --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-          echo "- **Running Pods**: $RUNNING_PODS" >> "$SUMMARY_FILE"
-          
-          # Check individual pod types
-          LB_RUNNING=$(sudo k3s kubectl get pods -l app=load-balancer --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-          LOW_RUNNING=$(sudo k3s kubectl get pods -l app=llama-low-cost --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-          HIGH_RUNNING=$(sudo k3s kubectl get pods -l app=llama-high-cost --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-          WATCHER_RUNNING=$(sudo k3s kubectl get pods -l app=service-watcher --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l || echo "0")
-          
-          echo "- **Load Balancer**: $LB_RUNNING/1" >> "$SUMMARY_FILE"
-          echo "- **Low-Cost API Servers**: $LOW_RUNNING/3" >> "$SUMMARY_FILE"
-          echo "- **High-Cost API Servers**: $HIGH_RUNNING/2" >> "$SUMMARY_FILE"
-          echo "- **Service Watcher**: $WATCHER_RUNNING/1" >> "$SUMMARY_FILE"
-          
-          echo "Final test summary generated: $SUMMARY_FILE"
-          cat "$SUMMARY_FILE"
+                echo "## Pod: $POD (Namespace: $NS)"
+                echo "- Status: $STATUS"
+                echo "- Containers Ready: $READY"
+                echo "- Restart Counts: $RESTARTS"
 
-      - name: Check Load Balancer Logs (Post-Concurrent Test)
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          echo "Fetching load balancer logs after concurrent test..."
-          LB_POD=$(sudo k3s kubectl get pods -l app=load-balancer -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-          if [ -n "$LB_POD" ]; then
-            echo "Load balancer pod: $LB_POD"
-            
-            # Get full logs after concurrent test
-            sudo k3s kubectl logs "$LB_POD" | tee "logs/concurrent-test-logs/concurrent_load_balancer_logs_${TIMESTAMP}.log"
-            
-            echo ""
-            echo "=========================================="
-            echo "LAST 30 LINES OF LOAD BALANCER LOGS (POST-CONCURRENT):"
-            echo "=========================================="
-            
-            # Display last 30 lines after concurrent test
-            LAST_30_LINES=$(sudo k3s kubectl logs "$LB_POD" --tail=30)
-            echo "$LAST_30_LINES"
-            echo "$LAST_30_LINES" > "logs/concurrent-test-logs/concurrent_load_balancer_last_30_lines_${TIMESTAMP}.log"
-            
-            echo "=========================================="
-            echo "Concurrent load balancing activity shows:"
-            echo "- Parallel request handling"
-            echo "- Service distribution under load"
-            echo "- Response time variations"
-            echo "=========================================="
-          else
-            echo "No load balancer pod found"
-          fi
+                # Container statuses
+                echo "- Container States:"
+                kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
 
-      - name: Collect Pod Logs (Post-Concurrent Test)
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          mkdir -p logs/concurrent-test-logs/pods
-          
-          # Get all pod status after concurrent test
-          sudo k3s kubectl get pods --all-namespaces | tee "logs/concurrent-test-logs/pods/all_pods_post_concurrent_${TIMESTAMP}.log"
-          
-          # Get detailed pod descriptions
-          sudo k3s kubectl describe pods --all-namespaces | tee "logs/concurrent-test-logs/pods/pod_descriptions_post_concurrent_${TIMESTAMP}.log"
-          
-          # Get llama-api-server pods logs after concurrent test
-          for pod in $(sudo k3s kubectl get pods -l app=llama-low-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
-            if [ -n "$pod" ]; then
-              echo "Getting post-concurrent logs for pod: $pod"
-              sudo k3s kubectl logs "$pod" > "logs/concurrent-test-logs/pods/pod_${pod}_post_concurrent_${TIMESTAMP}.log" 2>/dev/null || true
-            fi
-          done
-          
-          for pod in $(sudo k3s kubectl get pods -l app=llama-high-cost --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
-            if [ -n "$pod" ]; then
-              echo "Getting post-concurrent logs for pod: $pod"
-              sudo k3s kubectl logs "$pod" > "logs/concurrent-test-logs/pods/pod_${pod}_post_concurrent_${TIMESTAMP}.log" 2>/dev/null || true
-            fi
-          done
-          
-          # Get service-watcher logs after concurrent test
-          for pod in $(sudo k3s kubectl get pods -l app=service-watcher --no-headers -o custom-columns=":metadata.name" 2>/dev/null || true); do
-            if [ -n "$pod" ]; then
-              echo "Getting post-concurrent logs for service-watcher pod: $pod"
-              sudo k3s kubectl logs "$pod" > "logs/concurrent-test-logs/pods/watcher_${pod}_post_concurrent_${TIMESTAMP}.log" 2>/dev/null || true
-            fi
-          done
-          
-          # Create summary of concurrent test results
-          echo "=== CONCURRENT TEST SUMMARY ===" > "logs/concurrent-test-logs/concurrent_test_final_summary_${TIMESTAMP}.log"
-          echo "Test completed at: $(date)" >> "logs/concurrent-test-logs/concurrent_test_final_summary_${TIMESTAMP}.log"
-          echo "Response files created:" >> "logs/concurrent-test-logs/concurrent_test_final_summary_${TIMESTAMP}.log"
-          ls -la logs/concurrent-test-logs/concurrent_test_*/response_*.json >> "logs/concurrent-test-logs/concurrent_test_final_summary_${TIMESTAMP}.log" 2>/dev/null || echo "No response files found"
+                # Events (warnings only)
+                EVENTS=$(kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "- " + .reason + ": " + .message')
+                if [[ -z "$EVENTS" ]]; then
+                echo "- Events: None"
+                else
+                echo "- Events:"
+                echo "$EVENTS"
+                fi
 
-      - name: Upload Test Logs and Results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-logs-${{ github.run_number }}-${{ github.run_attempt }}
-          path: logs/
-          retention-days: 7
+                # Resource allocations
+                RESOURCES=$(kubectl get pod "$POD" -o jsonpath='{range .spec.containers[*]}{.name}: requests(cpu={.resources.requests.cpu},mem={.resources.echo "✅ Report saved to $LOG_FILE"ted):"dev/null || echo "  (metrics-server not available)"nd}')
 
-      - name: Cleanup
-        if: always()
-        run: |
-          echo "Cleaning up resources..."
-          # Kill port-forward if it exists
-          if [ -f "/tmp/port_forward_pid" ]; then
-            PID=$(cat /tmp/port_forward_pid 2>/dev/null || echo "")
-            if [ -n "$PID" ]; then
-              sudo kill $PID 2>/dev/null || true
-              echo "Port-forward process (PID: $PID) killed"
-            fi
-            rm -f /tmp/port_forward_pid
-          fi
-          # Delete kubernetes resources
-          echo "Deleting Kubernetes resources..."
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml 2>/dev/null || true
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml 2>/dev/null || true
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml 2>/dev/null || true
-          echo "Cleanup completed"
+
