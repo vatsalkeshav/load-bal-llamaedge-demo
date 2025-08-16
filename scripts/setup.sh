@@ -51,6 +51,11 @@ sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.t
 sudo k3s ctr images ls
 
 cd
-cp -R /mnt/mac/Users/dev/iheartzigang/models .
+cp -R /mnt/mac/Users/dev/someplace/models .
 chmod -R 777 models
 
+
+
+sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/load-balancer.yaml
+sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/default-services.yaml
+sudo k3s kubectl apply -f watcher/yaml/watcher.yaml

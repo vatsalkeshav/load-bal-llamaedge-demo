@@ -129,16 +129,59 @@ jobs:
           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
           sleep 30
 
+      - name: Create logs directory
+        run: |
+            mkdir -p logs
+            echo "Created logs directory structure"
+
       - name: Service Health Check
         run: |
-            echo "## Service Endpoints" >> "$LOG_FILE"
-            kubectl get endpoints -o json | jq -r '
+            #!/bin/bash
+            set -euo pipefail
+            
+            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+            SERVICE_LOG_FILE="logs/service-check.md"
+
+            # Create service health check report
+            {
+            echo "# Service Health Check Report"
+            echo "**Generated at:** $(date -u)"
+            echo "**Timestamp:** ${TIMESTAMP}"
+            echo ""
+            echo "## Service Endpoints"
+            echo ""
+            
+            sudo k3s kubectl get endpoints -o json | jq -r '
             .items[] |
-            "- \(.metadata.name): " +
+            "- **\(.metadata.name):** " +
             ([
                 .subsets[]?.addresses[]?.ip
-            ] | join(" "))
-            ' >> "$LOG_FILE"
+            ] | join(", "))
+            '
+            
+            echo ""
+            echo "## Services Status"
+            echo ""
+            sudo k3s kubectl get services -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,EXTERNAL-IP:.status.loadBalancer.ingress[0].ip,PORT:.spec.ports[0].port --no-headers | while read line; do
+                echo "- $line"
+            done
+            
+            echo ""
+            echo "## Service Details"
+            echo ""
+            sudo k3s kubectl get services -o json | jq -r '
+            .items[] |
+            "### \(.metadata.name)\n" +
+            "- **Namespace:** \(.metadata.namespace)\n" +
+            "- **Type:** \(.spec.type)\n" +
+            "- **Cluster IP:** \(.spec.clusterIP)\n" +
+            "- **Ports:** \([.spec.ports[]? | "\(.port):\(.targetPort)/\(.protocol)"] | join(", "))\n"
+            '
+            
+            } > "$SERVICE_LOG_FILE"
+            
+            echo "Service health check saved to $SERVICE_LOG_FILE"
+            cat $SERVICE_LOG_FILE
 
       - name: Collect pods' Health (Pre-Sequential Test)
         run: |
@@ -146,41 +189,506 @@ jobs:
             set -euo pipefail
 
             TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-            LOG_FILE="pod_health_report_${TIMESTAMP}.log"
+            POD_LOG_FILE="logs/pod-check-1-Pre-Sequential.md"
 
+            # Create pod health check report
             {
-            echo "=== POD HEALTH REPORT - ${TIMESTAMP} ==="
-            echo "Generated at: $(date -u)"
+            echo "# Pod Health Check Report 1 (Pre-Sequential Test)"
+            echo "**Generated at:** $(date -u)"
+            echo "**Timestamp:** ${TIMESTAMP}"
             echo ""
 
             # List all pods
-            PODS=$(kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
 
             for POD in $PODS; do
-                NS=$(kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
-                STATUS=$(kubectl get pod "$POD" -o jsonpath='{.status.phase}')
-                READY=$(kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
-                RESTARTS=$(kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
 
-                echo "## Pod: $POD (Namespace: $NS)"
-                echo "- Status: $STATUS"
-                echo "- Containers Ready: $READY"
-                echo "- Restart Counts: $RESTARTS"
+                echo "## Pod: \`$POD\`"
+                echo "**Namespace:** $NS"
+                echo ""
+                echo "- **Status:** $STATUS"
+                echo "- **Containers Ready:** $READY"
+                echo "- **Restart Counts:** $RESTARTS"
 
                 # Container statuses
-                echo "- Container States:"
-                kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+                echo "- **Container States:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
 
                 # Events (warnings only)
-                EVENTS=$(kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "- " + .reason + ": " + .message')
+                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
                 if [[ -z "$EVENTS" ]]; then
-                echo "- Events: None"
+                echo "- **Events:** None"
                 else
-                echo "- Events:"
+                echo "- **Events:**"
                 echo "$EVENTS"
                 fi
 
                 # Resource allocations
-                RESOURCES=$(kubectl get pod "$POD" -o jsonpath='{range .spec.containers[*]}{.name}: requests(cpu={.resources.requests.cpu},mem={.resources.echo "✅ Report saved to $LOG_FILE"ted):"dev/null || echo "  (metrics-server not available)"nd}')
+                echo "- **Resource Requests:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .spec.containers[*]}  - {.name}: CPU={.resources.requests.cpu}, Memory={.resources.requests.memory}{"\n"}{end}' 2>/dev/null || echo "  - (No resource requests specified)"
+                
+                # Current resource usage (if metrics-server is available)
+                echo "- **Current Usage:**"
+                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
+                
+                echo ""
+            done
+
+            } > "$POD_LOG_FILE"
+            
+            echo "Pod health check saved to $POD_LOG_FILE"
+            cat $POD_LOG_FILE
+
+      - name: Collect load-balancer Pod Logs (Pre-Sequential Test)
+        run: |
+            #!/bin/bash
+
+            # === Config ===
+            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+            LOG_FILE="logs/lb_pod_logs_combined.md"
+
+            # === Current timestamp ===
+            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            # === Determine last timestamp from file ===
+            if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
+                LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
+                RANGE_OPT="--since-time=$LAST_TS"
+
+                # time diff
+                LAST_UNIX=$(date -d "$LAST_TS" +%s)
+                NOW_UNIX=$(date -d "$NOW" +%s)
+                DIFF=$((NOW_UNIX - LAST_UNIX))
+                DIFF_STR=" (after ${DIFF}s)"
+
+                # next index
+                INDEX=$(( $(grep -c "^=== Pod logs (Pre-Sequential Test)" "$LOG_FILE") + 1 ))
+            else
+                RANGE_OPT=""
+                DIFF_STR=""
+                INDEX=1
+            fi
+
+            # === Append marker ===
+            {
+                echo ""
+                echo "=== Pod logs $INDEX - $NOW$DIFF_STR ==="
+            } >> "$LOG_FILE"
+
+            # === Append new logs ===
+            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+
+            # === Save last timestamp marker inside same file ===
+            echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
+
+            echo "Logs appended to: $LOG_FILE (entry $INDEX)"
+
+      - name: Port-forward from k3s in background
+        run: |
+            sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080 > /dev/null 2>&1 &
+            PF_PID=$!
+            echo "Port-forward PID: $PF_PID"
+            echo "PORTER_PID=$PF_PID" >> $GITHUB_ENV
+            echo "$PF_PID" > /tmp/port_forward_pid
+            sleep 0.5
 
 
+      - name: Run Sequential Load Test
+        run: |
+            TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
+            LOG_FILE="logs/sequential_test_${TIMESTAMP}.md"
+
+            echo "Starting sequential test at $(date)" | tee "$LOG_FILE"
+            echo "========================================" | tee -a "$LOG_FILE"
+
+            SUCCESS_COUNT=0
+            COUNT_LOW=0
+            COUNT_HIGH=0
+
+            for i in {1..10}; do
+            echo "=== Request $i ===" | tee -a "$LOG_FILE"
+            echo "Timestamp: $(date +'%H:%M:%S.%3N')" | tee -a "$LOG_FILE"
+
+            response=$(curl -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
+                -X POST http://localhost:9090/v1/chat/completions \
+                -H 'Content-Type: application/json' \
+                -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
+                --silent --show-error 2>&1)
+
+            if echo "$response" | grep -q "HTTP_CODE:200"; then
+                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+                echo "✓ Request $i successful" | tee -a "$LOG_FILE"
+            else
+                echo "✗ Request $i failed" | tee -a "$LOG_FILE"
+            fi
+
+            # Count models
+            if echo "$response" | grep -q '"model":"llama-3-1b-low"'; then
+                COUNT_LOW=$((COUNT_LOW + 1))
+            elif echo "$response" | grep -q '"model":"llama-3-3b-high"'; then
+                COUNT_HIGH=$((COUNT_HIGH + 1))
+            fi
+
+            echo "$response" | tee -a "$LOG_FILE"
+            echo -e "\n---\n" | tee -a "$LOG_FILE"
+
+            sleep 0.5
+            done
+
+            echo "Sequential test completed at $(date)" | tee -a "$LOG_FILE"
+            echo "Successful requests: $SUCCESS_COUNT out of 10" | tee -a "$LOG_FILE"
+            echo "Model counts:" | tee -a "$LOG_FILE"
+            echo "  llama-3-1b-low:  $COUNT_LOW" | tee -a "$LOG_FILE"
+            echo "  llama-3-3b-high: $COUNT_HIGH" | tee -a "$LOG_FILE"
+
+            # Calculate ratio high:low
+            if [ $COUNT_HIGH -gt 0 ]; then
+            RATIO=$(echo "scale=2; $COUNT_HIGH / $COUNT_LOW" | bc)
+            echo "High:Low ratio = $COUNT_HIGH:$COUNT_LOW (~$RATIO)" | tee -a "$LOG_FILE"
+            else
+            echo "High:Low ratio = 0 (no high responses)" | tee -a "$LOG_FILE"
+            fi
+
+            echo
+            echo "Logs saved at: $LOG_FILE"
+
+      - name: Get pods' health (Post-Sequential Test, Pre-Concurrent Test)
+        run: |
+            #!/bin/bash
+            set -euo pipefail
+
+            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+            POD_LOG_FILE="logs/pod-check-2-Post-Sequential-Pre-Concurrent.md"
+
+            # Create pod health check report
+            {
+            echo "# Pod Health Check Report 2 (Post-Sequential Test, Pre-Concurrent Test)"
+            echo "**Generated at:** $(date -u)"
+            echo "**Timestamp:** ${TIMESTAMP}"
+            echo ""
+
+            # List all pods
+            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+
+            for POD in $PODS; do
+                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+
+                echo "## Pod: \`$POD\`"
+                echo "**Namespace:** $NS"
+                echo ""
+                echo "- **Status:** $STATUS"
+                echo "- **Containers Ready:** $READY"
+                echo "- **Restart Counts:** $RESTARTS"
+
+                # Container statuses
+                echo "- **Container States:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+
+                # Events (warnings only)
+                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
+                if [[ -z "$EVENTS" ]]; then
+                echo "- **Events:** None"
+                else
+                echo "- **Events:**"
+                echo "$EVENTS"
+                fi
+
+                # Resource allocations
+                echo "- **Resource Requests:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .spec.containers[*]}  - {.name}: CPU={.resources.requests.cpu}, Memory={.resources.requests.memory}{"\n"}{end}' 2>/dev/null || echo "  - (No resource requests specified)"
+                
+                # Current resource usage (if metrics-server is available)
+                echo "- **Current Usage:**"
+                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
+                
+                echo ""
+            done
+
+            } > "$POD_LOG_FILE"
+            
+            echo "Pod health check saved to $POD_LOG_FILE"
+            cat $POD_LOG_FILE
+          
+
+      - name: Collect load-balancer Pod Logs (Post-Sequential Test, Pre-Concurrent Test)
+        run: |
+            #!/bin/bash
+
+            # === Config ===
+            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+            LOG_FILE="logs/lb_pod_logs_combined.md"
+
+            # === Current timestamp ===
+            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            # === Determine last timestamp from file ===
+            if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
+                LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
+                RANGE_OPT="--since-time=$LAST_TS"
+
+                # time diff
+                LAST_UNIX=$(date -d "$LAST_TS" +%s)
+                NOW_UNIX=$(date -d "$NOW" +%s)
+                DIFF=$((NOW_UNIX - LAST_UNIX))
+                DIFF_STR=" (after ${DIFF}s)"
+
+                # next index
+                INDEX=$(( $(grep -c "^=== Pod logs (Post-Sequential Test, Pre-Concurrent Test)" "$LOG_FILE") + 1 ))
+            else
+                RANGE_OPT=""
+                DIFF_STR=""
+                INDEX=1
+            fi
+
+            # === Append marker ===
+            {
+                echo ""
+                echo "=== Pod logs $INDEX - $NOW$DIFF_STR ==="
+            } >> "$LOG_FILE"
+
+            # === Append new logs ===
+            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+
+            # === Save last timestamp marker inside same file ===
+            echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
+
+            echo "Logs appended to: $LOG_FILE (entry $INDEX)"
+
+
+      - name: Run Concurrent Load Test (10 parallel requests)
+        run: |
+            cd
+            TEST_DIR="logs/load_test_small_$(date +%Y%m%d_%H%M%S)"
+            mkdir -p "$TEST_DIR"
+
+            for i in {1..10}; do
+                (
+                    request_start=$(date +%s.%3N)
+                    echo "Request $i started at $(date +%H:%M:%S.%3N)" > "$TEST_DIR/request_${i}_log.txt"
+                    
+                    response=$(curl --max-time 300 -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
+                        -X POST http://localhost:9090/v1/chat/completions \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
+                        --silent --show-error 2>"$TEST_DIR/request_${i}_error.log")
+                    
+                    request_end=$(date +%s.%3N)
+                    duration=$(echo "$request_end - $request_start" | bc -l)
+                    
+                    echo "$response" | head -n -2 > "$TEST_DIR/response_${i}.json"
+                    
+                    echo "Request $i completed at $(date +%H:%M:%S.%3N)" >> "$TEST_DIR/request_${i}_log.txt"
+                    echo "Duration: ${duration}s" >> "$TEST_DIR/request_${i}_log.txt"
+                    echo "$response" | tail -n 2 >> "$TEST_DIR/request_${i}_log.txt"
+                ) &
+            done
+
+            # check responses/logs
+            # cd && cd $TEST_DIR
+
+            # wait for all background requests to finish
+            wait
+
+            # Generate summary log
+            SUMMARY_LOG="$TEST_DIR/summary-concurrent-test.log"
+            echo "Starting concurrent test at $(date)" | tee "$SUMMARY_LOG"
+            echo "========================================" | tee -a "$SUMMARY_LOG"
+
+            SUCCESS_COUNT=0
+            COUNT_LOW=0
+            COUNT_HIGH=0
+
+            for i in {1..10}; do
+                echo "=== Request $i ===" | tee -a "$SUMMARY_LOG"
+                if [ -s "$TEST_DIR/response_${i}.json" ]; then
+                    ts=$(grep "started at" "$TEST_DIR/request_${i}_log.txt" | awk '{print $5}')
+                    echo "Timestamp: $ts" | tee -a "$SUMMARY_LOG"
+                    
+                    if grep -q "HTTP_CODE:200" "$TEST_DIR/request_${i}_log.txt"; then
+                        echo "✓ Request $i successful" | tee -a "$SUMMARY_LOG"
+                        SUCCESS_COUNT=$((SUCCESS_COUNT+1))
+                    else
+                        echo "✗ Request $i failed" | tee -a "$SUMMARY_LOG"
+                    fi
+                    
+                    # print response
+                    cat "$TEST_DIR/response_${i}.json" | tee -a "$SUMMARY_LOG"
+
+                    # count model types
+                    if grep -q '"model":"llama-3-1b-low"' "$TEST_DIR/response_${i}.json"; then
+                        COUNT_LOW=$((COUNT_LOW+1))
+                    elif grep -q '"model":"llama-3-3b-high"' "$TEST_DIR/response_${i}.json"; then
+                        COUNT_HIGH=$((COUNT_HIGH+1))
+                    fi
+
+                    # print http + timing info
+                    tail -n 2 "$TEST_DIR/request_${i}_log.txt" | tee -a "$SUMMARY_LOG"
+                else
+                    echo "Timestamp: $(date +%H:%M:%S.%3N)" | tee -a "$SUMMARY_LOG"
+                    echo "✗ Request $i failed (see error log)" | tee -a "$SUMMARY_LOG"
+                    cat "$TEST_DIR/request_${i}_error.log" | tee -a "$SUMMARY_LOG"
+                fi
+
+                echo -e "\n---\n" | tee -a "$SUMMARY_LOG"
+            done
+
+            echo "Concurrent test completed at $(date)" | tee -a "$SUMMARY_LOG"
+            echo "Successful requests: $SUCCESS_COUNT out of 10" | tee -a "$SUMMARY_LOG"
+            echo "Model counts:" | tee -a "$SUMMARY_LOG"
+            echo "  llama-3-1b-low:  $COUNT_LOW" | tee -a "$SUMMARY_LOG"
+            echo "  llama-3-3b-high: $COUNT_HIGH" | tee -a "$SUMMARY_LOG"
+
+            # Ratio
+            if [ $COUNT_LOW -gt 0 ]; then
+                RATIO=$(echo "scale=2; $COUNT_HIGH / $COUNT_LOW" | bc)
+                echo "High:Low ratio = $COUNT_HIGH:$COUNT_LOW (~$RATIO)" | tee -a "$SUMMARY_LOG"
+            else
+                echo "High:Low ratio = N/A (no low responses)" | tee -a "$SUMMARY_LOG"
+            fi
+
+            echo
+            echo "Summary log saved at: $SUMMARY_LOG"
+
+      - name: Collect pods' Health (Post-Concurrent Test)
+        run: |
+            #!/bin/bash
+            set -euo pipefail
+
+            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+            POD_LOG_FILE="logs/pod-check-3-Post-Concurrent.md"
+
+            # Create pod health check report
+            {
+            echo "# Pod Health Check Report 2 (Post-Concurrent Test)"
+            echo "**Generated at:** $(date -u)"
+            echo "**Timestamp:** ${TIMESTAMP}"
+            echo ""
+
+            # List all pods
+            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+
+            for POD in $PODS; do
+                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+
+                echo "## Pod: \`$POD\`"
+                echo "**Namespace:** $NS"
+                echo ""
+                echo "- **Status:** $STATUS"
+                echo "- **Containers Ready:** $READY"
+                echo "- **Restart Counts:** $RESTARTS"
+
+                # Container statuses
+                echo "- **Container States:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+
+                # Events (warnings only)
+                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
+                if [[ -z "$EVENTS" ]]; then
+                echo "- **Events:** None"
+                else
+                echo "- **Events:**"
+                echo "$EVENTS"
+                fi
+
+                # Resource allocations
+                echo "- **Resource Requests:**"
+                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .spec.containers[*]}  - {.name}: CPU={.resources.requests.cpu}, Memory={.resources.requests.memory}{"\n"}{end}' 2>/dev/null || echo "  - (No resource requests specified)"
+                
+                # Current resource usage (if metrics-server is available)
+                echo "- **Current Usage:**"
+                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
+                
+                echo ""
+            done
+
+            } > "$POD_LOG_FILE"
+            
+            echo "Pod health check saved to $POD_LOG_FILE"
+            cat $POD_LOG_FILE
+
+
+      - name: Collect load-balancer Pod Logs (Post-Concurrent Test)
+        run: |
+            #!/bin/bash
+
+            # === Config ===
+            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+            LOG_FILE="logs/lb_pod_logs_combined.md"
+
+            # === Current timestamp ===
+            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            # === Determine last timestamp from file ===
+            if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
+                LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
+                RANGE_OPT="--since-time=$LAST_TS"
+
+                # time diff
+                LAST_UNIX=$(date -d "$LAST_TS" +%s)
+                NOW_UNIX=$(date -d "$NOW" +%s)
+                DIFF=$((NOW_UNIX - LAST_UNIX))
+                DIFF_STR=" (after ${DIFF}s)"
+
+                # next index
+                INDEX=$(( $(grep -c "^=== Pod logs (Post-Concurrent Test)" "$LOG_FILE") + 1 ))
+            else
+                RANGE_OPT=""
+                DIFF_STR=""
+                INDEX=1
+            fi
+
+            # === Append marker ===
+            {
+                echo ""
+                echo "=== Pod logs $INDEX - $NOW$DIFF_STR ==="
+            } >> "$LOG_FILE"
+
+            # === Append new logs ===
+            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+
+            # === Save last timestamp marker inside same file ===
+            echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
+
+            echo "Logs appended to: $LOG_FILE (entry $INDEX)"
+
+      - name: Generate Test Report
+        run: |
+
+    #   - name: Display logs structure
+    #     run: |
+    #         echo "Generated log structure:"
+    #         echo "logs:"
+    #         ls -la logs/ | grep -E '\.(md)$' | awk '{print "  - " $9}'
+            
+    #         echo ""
+    #         echo "Log file sizes:"
+    #         du -h logs/*.md | sed 's/^/  /'
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs
+          path: logs/
+          retention-days: 30
+
+
+
+
+
+
+
+
+# sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/load-balancer.yaml
+# sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/default-services.yaml
+# sudo k3s kubectl apply -f watcher/yaml/watcher.yaml
