@@ -1,902 +1,902 @@
-name: godhelpsthosewhohelpthemselves
+# name: godhelpsthosewhohelpthemselves
 
-on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
+# on:
+#   push:
+#     branches: [master]
+#   pull_request:
+#     branches: [master]
+#   workflow_dispatch:
+#   schedule:
+#     - cron: '0 0 * * *'
 
-env:
-  CARGO_TERM_COLOR: always
+# env:
+#   CARGO_TERM_COLOR: always
 
-jobs:
-  k3s-demo:
-    runs-on: ubuntu-latest
+# jobs:
+#   k3s-demo:
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: true
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#         with:
+#           submodules: true
 
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-            target: wasm32-wasip1
-            cache: false
+#       - name: Set up Rust
+#         uses: actions-rust-lang/setup-rust-toolchain@v1
+#         with:
+#             target: wasm32-wasip1
+#             cache: false
 
-      - name: Install WasmEdge with WASI-NN plugin
-        run: |
-          curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- --plugins wasi_nn-ggml -v 0.14.1
-          wasmedge --version # verify
+#       - name: Install WasmEdge with WASI-NN plugin
+#         run: |
+#           curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- --plugins wasi_nn-ggml -v 0.14.1
+#           wasmedge --version # verify
           
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc
+#       - name: Install system dependencies
+#         run: |
+#           sudo apt-get update
+#           sudo apt-get install -y bc
       
-      - name: Build and install Runwasi's containerd-shim-wasmedge-v1
-        run: |
-          cd $HOME
-          git clone https://github.com/containerd/runwasi.git
-          cd runwasi
-          ./scripts/setup-linux.sh
-          make build-wasmedge
-          INSTALL="sudo install" LN="sudo ln -sf" make install-wasmedge
-          source ~/.bashrc
-          which containerd-shim-wasmedge-v1 # verify
+#       - name: Build and install Runwasi's containerd-shim-wasmedge-v1
+#         run: |
+#           cd $HOME
+#           git clone https://github.com/containerd/runwasi.git
+#           cd runwasi
+#           ./scripts/setup-linux.sh
+#           make build-wasmedge
+#           INSTALL="sudo install" LN="sudo ln -sf" make install-wasmedge
+#           source ~/.bashrc
+#           which containerd-shim-wasmedge-v1 # verify
 
-      - name: Install k3s
-        run: |
-          cd $HOME
-          curl -sfL https://get.k3s.io | sh -
-          sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
-          sudo k3s --version # verify
+#       - name: Install k3s
+#         run: |
+#           cd $HOME
+#           curl -sfL https://get.k3s.io | sh -
+#           sudo chmod 777 /etc/rancher/k3s/k3s.yaml # hack
+#           sudo k3s --version # verify
 
-      - name: Download service-watcher's docker image
-        run: |
-            sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.91
-            sudo k3s ctr images ls | grep "vatsalkeshav/watcher:0.91" # verify
+#       - name: Download service-watcher's docker image
+#         run: |
+#             sudo k3s ctr image pull docker.io/vatsalkeshav/watcher:0.91
+#             sudo k3s ctr images ls | grep "vatsalkeshav/watcher:0.91" # verify
 
-      - name: Build and import LlamaEdge's llama-api-server's wasm img
-        run: |
-            cd $HOME
-            git clone --recurse-submodules https://github.com/second-state/runwasi-wasmedge-demo.git
-            cd runwasi-wasmedge-demo
+#       - name: Build and import LlamaEdge's llama-api-server's wasm img
+#         run: |
+#             cd $HOME
+#             git clone --recurse-submodules https://github.com/second-state/runwasi-wasmedge-demo.git
+#             cd runwasi-wasmedge-demo
 
-            sed -i -e '/define CHECK_CONTAINERD_VERSION/,/^endef/{
-            s/Containerd version must be/WARNING: Containerd version should be/
-            /exit 1;/d
-            }' Makefile
+#             sed -i -e '/define CHECK_CONTAINERD_VERSION/,/^endef/{
+#             s/Containerd version must be/WARNING: Containerd version should be/
+#             /exit 1;/d
+#             }' Makefile
 
-            git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
+#             git -C apps/llamaedge apply $PWD/disable_wasi_logging.patch
 
-            rustup target add wasm32-wasip1
-            OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
+#             rustup target add wasm32-wasip1
+#             OPT_PROFILE=release RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" make apps/llamaedge/llama-api-server
 
-            cd apps/llamaedge/llama-api-server
-            oci-tar-builder --name llama-api-server \
-                --repo ghcr.io/second-state \
-                --tag latest \
-                --module target/wasm32-wasip1/release/llama-api-server.wasm \
-                -o target/wasm32-wasip1/release/img-oci.tar
-            sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-            sudo k3s ctr images ls | grep "ghcr.io/second-state/llama-api-server:latest" # verify
+#             cd apps/llamaedge/llama-api-server
+#             oci-tar-builder --name llama-api-server \
+#                 --repo ghcr.io/second-state \
+#                 --tag latest \
+#                 --module target/wasm32-wasip1/release/llama-api-server.wasm \
+#                 -o target/wasm32-wasip1/release/img-oci.tar
+#             sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
+#             sudo k3s ctr images ls | grep "ghcr.io/second-state/llama-api-server:latest" # verify
 
-      - name: Build and import load-balancer's wasm img
-        run: |
-            cd $GITHUB_WORKSPACE/load-balancer-llamaedge
+#       - name: Build and import load-balancer's wasm img
+#         run: |
+#             cd $GITHUB_WORKSPACE/load-balancer-llamaedge
 
-            RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" cargo build --release --target wasm32-wasip1
+#             RUSTFLAGS="--cfg wasmedge --cfg tokio_unstable" cargo build --release --target wasm32-wasip1
 
-            oci-tar-builder --name load-balancer-llamaedge \
-                --repo ghcr.io/second-state \
-                --tag latest \
-                --module target/wasm32-wasip1/release/load-balancer-llamaedge.wasm \
-                -o target/wasm32-wasip1/release/img-oci.tar # Create OCI image from the WASM binary
-            sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
-            sudo k3s ctr images ls | grep "ghcr.io/second-state/load-balancer-llamaedge:latest" # verify
+#             oci-tar-builder --name load-balancer-llamaedge \
+#                 --repo ghcr.io/second-state \
+#                 --tag latest \
+#                 --module target/wasm32-wasip1/release/load-balancer-llamaedge.wasm \
+#                 -o target/wasm32-wasip1/release/img-oci.tar # Create OCI image from the WASM binary
+#             sudo k3s ctr image import --all-platforms target/wasm32-wasip1/release/img-oci.tar
+#             sudo k3s ctr images ls | grep "ghcr.io/second-state/load-balancer-llamaedge:latest" # verify
             
-      - name: Download gguf model
-        run: |
-          sudo mkdir -p $HOME/models
-          sudo chmod 777 $HOME/models
-          cd /home/runner/models
-          curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
-          curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf
-          # curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
-          ls -la /home/runner/models/
+#       - name: Download gguf model
+#         run: |
+#           sudo mkdir -p $HOME/models
+#           sudo chmod 777 $HOME/models
+#           cd /home/runner/models
+#           curl -LO https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q5_K_M.gguf
+#           curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf
+#           # curl -LO https://huggingface.co/second-state/Llama-3.2-3B-Instruct-Uncensored-GGUF/resolve/main/Llama-3.2-3B-Instruct-Uncensored-Q5_K_M.gguf
+#           ls -la /home/runner/models/
         
-          REQUIRED_MODELS=(
-            "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"  # Used by low-cost pods
-            "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"  # Used by high-cost pods
-          )
-          for model in "${REQUIRED_MODELS[@]}"; do
-            if [ -f "$model" ]; then
-              echo "Model found: $model"
-            else
-              echo "Missing model: $model"
-              exit 1
-            fi
+#           REQUIRED_MODELS=(
+#             "/home/runner/models/Llama-3.2-1B-Instruct-Q5_K_M.gguf"  # Used by low-cost pods
+#             "/home/runner/models/Llama-3.2-3B-Instruct-Q5_K_M.gguf"  # Used by high-cost pods
+#           )
+#           for model in "${REQUIRED_MODELS[@]}"; do
+#             if [ -f "$model" ]; then
+#               echo "Model found: $model"
+#             else
+#               echo "Missing model: $model"
+#               exit 1
+#             fi
 
-      - name: Create and apply necessary yaml's - for load-balancer, backend-llamaedge-api-servers and service-watcher
-        run: |
-          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml
-          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml
-          sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
-          sleep 30
+#       - name: Create and apply necessary yaml's - for load-balancer, backend-llamaedge-api-servers and service-watcher
+#         run: |
+#           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml
+#           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml
+#           sudo k3s kubectl apply -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml
+#           sleep 30
 
-      - name: Create logs directory
-        run: |
-            mkdir -p logs
-            echo "Created logs directory structure"
+#       - name: Create logs directory
+#         run: |
+#             mkdir -p logs
+#             echo "Created logs directory structure"
 
-      - name: Service Health Check
-        run: |
-            #!/bin/bash
-            set -euo pipefail
+#       - name: Service Health Check
+#         run: |
+#             #!/bin/bash
+#             set -euo pipefail
             
-            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-            SERVICE_LOG_FILE="logs/service-check.md"
+#             TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+#             SERVICE_LOG_FILE="logs/service-check.md"
 
-            # Create service health check report
-            {
-            echo "# Service Health Check Report"
-            echo "**Generated at:** $(date -u)"
-            echo "**Timestamp:** ${TIMESTAMP}"
-            echo ""
-            echo "## Service Endpoints"
-            echo ""
+#             # Create service health check report
+#             {
+#             echo "# Service Health Check Report"
+#             echo "**Generated at:** $(date -u)"
+#             echo "**Timestamp:** ${TIMESTAMP}"
+#             echo ""
+#             echo "## Service Endpoints"
+#             echo ""
             
-            sudo k3s kubectl get endpoints -o json | jq -r '
-            .items[] |
-            "- **\(.metadata.name):** " +
-            ([
-                .subsets[]?.addresses[]?.ip
-            ] | join(", "))
-            '
+#             sudo k3s kubectl get endpoints -o json | jq -r '
+#             .items[] |
+#             "- **\(.metadata.name):** " +
+#             ([
+#                 .subsets[]?.addresses[]?.ip
+#             ] | join(", "))
+#             '
             
-            echo ""
-            echo "## Services Status"
-            echo ""
-            sudo k3s kubectl get services -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,EXTERNAL-IP:.status.loadBalancer.ingress[0].ip,PORT:.spec.ports[0].port --no-headers | while read line; do
-                echo "- $line"
-            done
+#             echo ""
+#             echo "## Services Status"
+#             echo ""
+#             sudo k3s kubectl get services -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,EXTERNAL-IP:.status.loadBalancer.ingress[0].ip,PORT:.spec.ports[0].port --no-headers | while read line; do
+#                 echo "- $line"
+#             done
             
-            echo ""
-            echo "## Service Details"
-            echo ""
-            sudo k3s kubectl get services -o json | jq -r '
-            .items[] |
-            "### \(.metadata.name)\n" +
-            "- **Namespace:** \(.metadata.namespace)\n" +
-            "- **Type:** \(.spec.type)\n" +
-            "- **Cluster IP:** \(.spec.clusterIP)\n" +
-            "- **Ports:** \([.spec.ports[]? | "\(.port):\(.targetPort)/\(.protocol)"] | join(", "))\n"
-            '
+#             echo ""
+#             echo "## Service Details"
+#             echo ""
+#             sudo k3s kubectl get services -o json | jq -r '
+#             .items[] |
+#             "### \(.metadata.name)\n" +
+#             "- **Namespace:** \(.metadata.namespace)\n" +
+#             "- **Type:** \(.spec.type)\n" +
+#             "- **Cluster IP:** \(.spec.clusterIP)\n" +
+#             "- **Ports:** \([.spec.ports[]? | "\(.port):\(.targetPort)/\(.protocol)"] | join(", "))\n"
+#             '
             
-            } > "$SERVICE_LOG_FILE"
+#             } > "$SERVICE_LOG_FILE"
             
-            echo "Service health check saved to $SERVICE_LOG_FILE"
-            cat $SERVICE_LOG_FILE
+#             echo "Service health check saved to $SERVICE_LOG_FILE"
+#             cat $SERVICE_LOG_FILE
 
-      - name: Collect pods' Health (Pre-Sequential Test)
-        run: |
-            #!/bin/bash
-            set -euo pipefail
+#       - name: Collect pods' Health (Pre-Sequential Test)
+#         run: |
+#             #!/bin/bash
+#             set -euo pipefail
 
-            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-            POD_LOG_FILE="logs/pod-check-1-Pre-Sequential.md"
+#             TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+#             POD_LOG_FILE="logs/pod-check-1-Pre-Sequential.md"
 
-            # Create pod health check report
-            {
-            echo "# Pod Health Check Report 1 (Pre-Sequential Test)"
-            echo "**Generated at:** $(date -u)"
-            echo "**Timestamp:** ${TIMESTAMP}"
-            echo ""
+#             # Create pod health check report
+#             {
+#             echo "# Pod Health Check Report 1 (Pre-Sequential Test)"
+#             echo "**Generated at:** $(date -u)"
+#             echo "**Timestamp:** ${TIMESTAMP}"
+#             echo ""
 
-            # List all pods
-            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+#             # List all pods
+#             PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
 
-            for POD in $PODS; do
-                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
-                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
-                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
-                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+#             for POD in $PODS; do
+#                 NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+#                 STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+#                 READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+#                 RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
 
-                echo "## Pod: \`$POD\`"
-                echo "**Namespace:** $NS"
-                echo ""
-                echo "- **Status:** $STATUS"
-                echo "- **Containers Ready:** $READY"
-                echo "- **Restart Counts:** $RESTARTS"
+#                 echo "## Pod: \`$POD\`"
+#                 echo "**Namespace:** $NS"
+#                 echo ""
+#                 echo "- **Status:** $STATUS"
+#                 echo "- **Containers Ready:** $READY"
+#                 echo "- **Restart Counts:** $RESTARTS"
 
-                # Container statuses
-                echo "- **Container States:**"
-                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+#                 # Container statuses
+#                 echo "- **Container States:**"
+#                 sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
 
-                # Events (warnings only)
-                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
-                if [[ -z "$EVENTS" ]]; then
-                echo "- **Events:** None"
-                else
-                echo "- **Events:**"
-                echo "$EVENTS"
-                fi
+#                 # Events (warnings only)
+#                 EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
+#                 if [[ -z "$EVENTS" ]]; then
+#                 echo "- **Events:** None"
+#                 else
+#                 echo "- **Events:**"
+#                 echo "$EVENTS"
+#                 fi
 
-                # Current resource usage (if metrics-server is available)
-                echo "- **Current Usage:**"
-                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
+#                 # Current resource usage (if metrics-server is available)
+#                 echo "- **Current Usage:**"
+#                 sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
                 
-                echo ""
-            done
+#                 echo ""
+#             done
 
-            } > "$POD_LOG_FILE"
+#             } > "$POD_LOG_FILE"
             
-            echo "Pod health check saved to $POD_LOG_FILE"
-            cat $POD_LOG_FILE
+#             echo "Pod health check saved to $POD_LOG_FILE"
+#             cat $POD_LOG_FILE
 
-      - name: Collect load-balancer Pod Logs (Pre-Sequential Test)
-        run: |
-            #!/bin/bash
+#       - name: Collect load-balancer Pod Logs (Pre-Sequential Test)
+#         run: |
+#             #!/bin/bash
 
-            # === Config ===
-            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
-            LOG_FILE="logs/lb_pod_logs_combined.md"
+#             # === Config ===
+#             LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+#             LOG_FILE="logs/lb_pod_logs_combined.md"
 
-            # === Current timestamp ===
-            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+#             # === Current timestamp ===
+#             NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-            # === Determine last timestamp from file ===
-            if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
-                LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
-                RANGE_OPT="--since-time=$LAST_TS"
+#             # === Determine last timestamp from file ===
+#             if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
+#                 LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
+#                 RANGE_OPT="--since-time=$LAST_TS"
 
-                # time diff
-                LAST_UNIX=$(date -d "$LAST_TS" +%s)
-                NOW_UNIX=$(date -d "$NOW" +%s)
-                DIFF=$((NOW_UNIX - LAST_UNIX))
-                DIFF_STR=" (after ${DIFF}s)"
+#                 # time diff
+#                 LAST_UNIX=$(date -d "$LAST_TS" +%s)
+#                 NOW_UNIX=$(date -d "$NOW" +%s)
+#                 DIFF=$((NOW_UNIX - LAST_UNIX))
+#                 DIFF_STR=" (after ${DIFF}s)"
 
-                # next index
-                INDEX=$(( $(grep -c "^=== Pod logs" "$LOG_FILE") + 1 ))
-            else
-                RANGE_OPT=""
-                DIFF_STR=""
-                INDEX=1
-            fi
+#                 # next index
+#                 INDEX=$(( $(grep -c "^=== Pod logs" "$LOG_FILE") + 1 ))
+#             else
+#                 RANGE_OPT=""
+#                 DIFF_STR=""
+#                 INDEX=1
+#             fi
 
-            # === Append marker ===
-            {
-                echo ""
-                echo "=== Pod logs (Pre-Sequential Test) $INDEX - $NOW$DIFF_STR ==="
-            } >> "$LOG_FILE"
+#             # === Append marker ===
+#             {
+#                 echo ""
+#                 echo "=== Pod logs (Pre-Sequential Test) $INDEX - $NOW$DIFF_STR ==="
+#             } >> "$LOG_FILE"
 
-            # === Append new logs ===
-            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+#             # === Append new logs ===
+#             kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
 
-            # === Save last timestamp marker inside same file ===
-            echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
+#             # === Save last timestamp marker inside same file ===
+#             echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
 
-            echo "Logs appended to: $LOG_FILE (entry $INDEX)"
+#             echo "Logs appended to: $LOG_FILE (entry $INDEX)"
 
-      - name: Port-forward from k3s in background
-        run: |
-            sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080 > /dev/null 2>&1 &
-            PF_PID=$!
-            echo "Port-forward PID: $PF_PID"
-            echo "PORTER_PID=$PF_PID" >> $GITHUB_ENV
-            echo "$PF_PID" > /tmp/port_forward_pid
-            sleep 0.5
+#       - name: Port-forward from k3s in background
+#         run: |
+#             sudo k3s kubectl port-forward svc/load-balancer-service 8080:8080 > /dev/null 2>&1 &
+#             PF_PID=$!
+#             echo "Port-forward PID: $PF_PID"
+#             echo "PORTER_PID=$PF_PID" >> $GITHUB_ENV
+#             echo "$PF_PID" > /tmp/port_forward_pid
+#             sleep 0.5
 
 
-      - name: Run Sequential Load Test
-        run: |
-            TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-            LOG_FILE="logs/sequential_test_${TIMESTAMP}.md"
+#       - name: Run Sequential Load Test
+#         run: |
+#             TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
+#             LOG_FILE="logs/sequential_test_${TIMESTAMP}.md"
 
-            echo "Starting sequential test at $(date)" | tee "$LOG_FILE"
-            echo "========================================" | tee -a "$LOG_FILE"
+#             echo "Starting sequential test at $(date)" | tee "$LOG_FILE"
+#             echo "========================================" | tee -a "$LOG_FILE"
 
-            SUCCESS_COUNT=0
-            COUNT_LOW=0
-            COUNT_HIGH=0
+#             SUCCESS_COUNT=0
+#             COUNT_LOW=0
+#             COUNT_HIGH=0
 
-            for i in {1..10}; do
-            echo "=== Request $i ===" | tee -a "$LOG_FILE"
-            echo "Timestamp: $(date +'%H:%M:%S.%3N')" | tee -a "$LOG_FILE"
+#             for i in {1..10}; do
+#             echo "=== Request $i ===" | tee -a "$LOG_FILE"
+#             echo "Timestamp: $(date +'%H:%M:%S.%3N')" | tee -a "$LOG_FILE"
 
-            response=$(curl -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
-                -X POST http://localhost:8080/v1/chat/completions \
-                -H 'Content-Type: application/json' \
-                -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
-                --silent --show-error 2>&1)
+#             response=$(curl -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
+#                 -X POST http://localhost:8080/v1/chat/completions \
+#                 -H 'Content-Type: application/json' \
+#                 -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
+#                 --silent --show-error 2>&1)
 
-            if echo "$response" | grep -q "HTTP_CODE:200"; then
-                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-                echo "✓ Request $i successful" | tee -a "$LOG_FILE"
-            else
-                echo "✗ Request $i failed" | tee -a "$LOG_FILE"
-            fi
+#             if echo "$response" | grep -q "HTTP_CODE:200"; then
+#                 SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+#                 echo "✓ Request $i successful" | tee -a "$LOG_FILE"
+#             else
+#                 echo "✗ Request $i failed" | tee -a "$LOG_FILE"
+#             fi
 
-            # Count models
-            if echo "$response" | grep -q '"model":"llama-3-1b-low"'; then
-                COUNT_LOW=$((COUNT_LOW + 1))
-            elif echo "$response" | grep -q '"model":"llama-3-3b-high"'; then
-                COUNT_HIGH=$((COUNT_HIGH + 1))
-            fi
+#             # Count models
+#             if echo "$response" | grep -q '"model":"llama-3-1b-low"'; then
+#                 COUNT_LOW=$((COUNT_LOW + 1))
+#             elif echo "$response" | grep -q '"model":"llama-3-3b-high"'; then
+#                 COUNT_HIGH=$((COUNT_HIGH + 1))
+#             fi
 
-            echo "$response" | tee -a "$LOG_FILE"
-            echo -e "\n---\n" | tee -a "$LOG_FILE"
+#             echo "$response" | tee -a "$LOG_FILE"
+#             echo -e "\n---\n" | tee -a "$LOG_FILE"
 
-            sleep 0.5
-            done
+#             sleep 0.5
+#             done
 
-            echo "Sequential test completed at $(date)" | tee -a "$LOG_FILE"
-            echo "Successful requests: $SUCCESS_COUNT out of 10" | tee -a "$LOG_FILE"
-            echo "Model counts:" | tee -a "$LOG_FILE"
-            echo "  llama-3-1b-low:  $COUNT_LOW" | tee -a "$LOG_FILE"
-            echo "  llama-3-3b-high: $COUNT_HIGH" | tee -a "$LOG_FILE"
+#             echo "Sequential test completed at $(date)" | tee -a "$LOG_FILE"
+#             echo "Successful requests: $SUCCESS_COUNT out of 10" | tee -a "$LOG_FILE"
+#             echo "Model counts:" | tee -a "$LOG_FILE"
+#             echo "  llama-3-1b-low:  $COUNT_LOW" | tee -a "$LOG_FILE"
+#             echo "  llama-3-3b-high: $COUNT_HIGH" | tee -a "$LOG_FILE"
 
-            # Calculate ratio high:low
-            if [ $COUNT_HIGH -gt 0 ]; then
-            RATIO=$(echo "scale=2; $COUNT_HIGH / $COUNT_LOW" | bc)
-            echo "High:Low ratio = $COUNT_HIGH:$COUNT_LOW (~$RATIO)" | tee -a "$LOG_FILE"
-            else
-            echo "High:Low ratio = 0 (no high responses)" | tee -a "$LOG_FILE"
-            fi
+#             # Calculate ratio high:low
+#             if [ $COUNT_HIGH -gt 0 ]; then
+#             RATIO=$(echo "scale=2; $COUNT_HIGH / $COUNT_LOW" | bc)
+#             echo "High:Low ratio = $COUNT_HIGH:$COUNT_LOW (~$RATIO)" | tee -a "$LOG_FILE"
+#             else
+#             echo "High:Low ratio = 0 (no high responses)" | tee -a "$LOG_FILE"
+#             fi
 
-            echo
-            echo "Logs saved at: $LOG_FILE"
+#             echo
+#             echo "Logs saved at: $LOG_FILE"
 
-      - name: Get pods' health (Post-Sequential Test, Pre-Concurrent Test)
-        run: |
-            #!/bin/bash
-            set -euo pipefail
+#       - name: Get pods' health (Post-Sequential Test, Pre-Concurrent Test)
+#         run: |
+#             #!/bin/bash
+#             set -euo pipefail
 
-            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-            POD_LOG_FILE="logs/pod-check-2-Post-Sequential-Pre-Concurrent.md"
+#             TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+#             POD_LOG_FILE="logs/pod-check-2-Post-Sequential-Pre-Concurrent.md"
 
-            # Create pod health check report
-            {
-            echo "# Pod Health Check Report 2 (Post-Sequential Test, Pre-Concurrent Test)"
-            echo "**Generated at:** $(date -u)"
-            echo "**Timestamp:** ${TIMESTAMP}"
-            echo ""
+#             # Create pod health check report
+#             {
+#             echo "# Pod Health Check Report 2 (Post-Sequential Test, Pre-Concurrent Test)"
+#             echo "**Generated at:** $(date -u)"
+#             echo "**Timestamp:** ${TIMESTAMP}"
+#             echo ""
 
-            # List all pods
-            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+#             # List all pods
+#             PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
 
-            for POD in $PODS; do
-                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
-                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
-                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
-                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+#             for POD in $PODS; do
+#                 NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+#                 STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+#                 READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+#                 RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
 
-                echo "## Pod: \`$POD\`"
-                echo "**Namespace:** $NS"
-                echo ""
-                echo "- **Status:** $STATUS"
-                echo "- **Containers Ready:** $READY"
-                echo "- **Restart Counts:** $RESTARTS"
+#                 echo "## Pod: \`$POD\`"
+#                 echo "**Namespace:** $NS"
+#                 echo ""
+#                 echo "- **Status:** $STATUS"
+#                 echo "- **Containers Ready:** $READY"
+#                 echo "- **Restart Counts:** $RESTARTS"
 
-                # Container statuses
-                echo "- **Container States:**"
-                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+#                 # Container statuses
+#                 echo "- **Container States:**"
+#                 sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
 
-                # Events (warnings only)
-                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
-                if [[ -z "$EVENTS" ]]; then
-                echo "- **Events:** None"
-                else
-                echo "- **Events:**"
-                echo "$EVENTS"
-                fi
+#                 # Events (warnings only)
+#                 EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
+#                 if [[ -z "$EVENTS" ]]; then
+#                 echo "- **Events:** None"
+#                 else
+#                 echo "- **Events:**"
+#                 echo "$EVENTS"
+#                 fi
 
-                # Current resource usage (if metrics-server is available)
-                echo "- **Current Usage:**"
-                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
+#                 # Current resource usage (if metrics-server is available)
+#                 echo "- **Current Usage:**"
+#                 sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
                 
-                echo ""
-            done
+#                 echo ""
+#             done
 
-            } > "$POD_LOG_FILE"
+#             } > "$POD_LOG_FILE"
             
-            echo "Pod health check saved to $POD_LOG_FILE"
-            cat $POD_LOG_FILE
+#             echo "Pod health check saved to $POD_LOG_FILE"
+#             cat $POD_LOG_FILE
           
 
-      - name: Collect load-balancer Pod Logs (Post-Sequential Test, Pre-Concurrent Test)
-        run: |
-            #!/bin/bash
+#       - name: Collect load-balancer Pod Logs (Post-Sequential Test, Pre-Concurrent Test)
+#         run: |
+#             #!/bin/bash
 
-            # === Config ===
-            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
-            LOG_FILE="logs/lb_pod_logs_combined.md"
+#             # === Config ===
+#             LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+#             LOG_FILE="logs/lb_pod_logs_combined.md"
 
-            # === Current timestamp ===
-            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+#             # === Current timestamp ===
+#             NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-            # === Determine last timestamp from file ===
-            if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
-                LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
-                RANGE_OPT="--since-time=$LAST_TS"
+#             # === Determine last timestamp from file ===
+#             if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
+#                 LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
+#                 RANGE_OPT="--since-time=$LAST_TS"
 
-                # time diff
-                LAST_UNIX=$(date -d "$LAST_TS" +%s)
-                NOW_UNIX=$(date -d "$NOW" +%s)
-                DIFF=$((NOW_UNIX - LAST_UNIX))
-                DIFF_STR=" (after ${DIFF}s)"
+#                 # time diff
+#                 LAST_UNIX=$(date -d "$LAST_TS" +%s)
+#                 NOW_UNIX=$(date -d "$NOW" +%s)
+#                 DIFF=$((NOW_UNIX - LAST_UNIX))
+#                 DIFF_STR=" (after ${DIFF}s)"
 
-                # next index
-                INDEX=$(( $(grep -c "^=== Pod logs" "$LOG_FILE") + 1 ))
-            else
-                RANGE_OPT=""
-                DIFF_STR=""
-                INDEX=1
-            fi
+#                 # next index
+#                 INDEX=$(( $(grep -c "^=== Pod logs" "$LOG_FILE") + 1 ))
+#             else
+#                 RANGE_OPT=""
+#                 DIFF_STR=""
+#                 INDEX=1
+#             fi
 
-            # === Append marker ===
-            {
-                echo ""
-                echo "=== Pod logs (Post-Sequential Test, Pre-Concurrent Test) $INDEX - $NOW$DIFF_STR ==="
-            } >> "$LOG_FILE"
+#             # === Append marker ===
+#             {
+#                 echo ""
+#                 echo "=== Pod logs (Post-Sequential Test, Pre-Concurrent Test) $INDEX - $NOW$DIFF_STR ==="
+#             } >> "$LOG_FILE"
 
-            # === Append new logs ===
-            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+#             # === Append new logs ===
+#             kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
 
-            # === Save last timestamp marker inside same file ===
-            echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
+#             # === Save last timestamp marker inside same file ===
+#             echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
 
-            echo "Logs appended to: $LOG_FILE (entry $INDEX)"
+#             echo "Logs appended to: $LOG_FILE (entry $INDEX)"
 
 
-      - name: Run Concurrent Load Test (10 parallel requests)
-        run: |
-            cd
-            TEST_DIR="logs/load_test_small_$(date +%Y%m%d_%H%M%S)"
-            mkdir -p "$TEST_DIR"
+#       - name: Run Concurrent Load Test (10 parallel requests)
+#         run: |
+#             cd
+#             TEST_DIR="logs/load_test_small_$(date +%Y%m%d_%H%M%S)"
+#             mkdir -p "$TEST_DIR"
 
-            for i in {1..10}; do
-                (
-                    request_start=$(date +%s.%3N)
-                    echo "Request $i started at $(date +%H:%M:%S.%3N)" > "$TEST_DIR/request_${i}_log.txt"
+#             for i in {1..10}; do
+#                 (
+#                     request_start=$(date +%s.%3N)
+#                     echo "Request $i started at $(date +%H:%M:%S.%3N)" > "$TEST_DIR/request_${i}_log.txt"
                     
-                    response=$(curl --max-time 300 -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
-                        -X POST http://localhost:8080/v1/chat/completions \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
-                        --silent --show-error 2>"$TEST_DIR/request_${i}_error.log")
+#                     response=$(curl --max-time 300 -w "\nHTTP_CODE:%{http_code}\nTIME_TOTAL:%{time_total}\n" \
+#                         -X POST http://localhost:8080/v1/chat/completions \
+#                         -H 'Content-Type: application/json' \
+#                         -d "{\"messages\": [{\"role\": \"user\", \"content\": \"Short answer: Tell me a fun fact\"}], \"model\": \"llama-3-1b\"}" \
+#                         --silent --show-error 2>"$TEST_DIR/request_${i}_error.log")
                     
-                    request_end=$(date +%s.%3N)
-                    duration=$(echo "$request_end - $request_start" | bc -l)
+#                     request_end=$(date +%s.%3N)
+#                     duration=$(echo "$request_end - $request_start" | bc -l)
                     
-                    echo "$response" | head -n -2 > "$TEST_DIR/response_${i}.json"
+#                     echo "$response" | head -n -2 > "$TEST_DIR/response_${i}.json"
                     
-                    echo "Request $i completed at $(date +%H:%M:%S.%3N)" >> "$TEST_DIR/request_${i}_log.txt"
-                    echo "Duration: ${duration}s" >> "$TEST_DIR/request_${i}_log.txt"
-                    echo "$response" | tail -n 2 >> "$TEST_DIR/request_${i}_log.txt"
-                ) &
-            done
+#                     echo "Request $i completed at $(date +%H:%M:%S.%3N)" >> "$TEST_DIR/request_${i}_log.txt"
+#                     echo "Duration: ${duration}s" >> "$TEST_DIR/request_${i}_log.txt"
+#                     echo "$response" | tail -n 2 >> "$TEST_DIR/request_${i}_log.txt"
+#                 ) &
+#             done
 
-            # check responses/logs
-            # cd && cd $TEST_DIR
+#             # check responses/logs
+#             # cd && cd $TEST_DIR
 
-            # wait for all background requests to finish
-            wait
+#             # wait for all background requests to finish
+#             wait
 
-            # Generate summary log
-            SUMMARY_LOG="$TEST_DIR/summary-concurrent-test.log"
-            echo "Starting concurrent test at $(date)" | tee "$SUMMARY_LOG"
-            echo "========================================" | tee -a "$SUMMARY_LOG"
+#             # Generate summary log
+#             SUMMARY_LOG="$TEST_DIR/summary-concurrent-test.log"
+#             echo "Starting concurrent test at $(date)" | tee "$SUMMARY_LOG"
+#             echo "========================================" | tee -a "$SUMMARY_LOG"
 
-            SUCCESS_COUNT=0
-            COUNT_LOW=0
-            COUNT_HIGH=0
+#             SUCCESS_COUNT=0
+#             COUNT_LOW=0
+#             COUNT_HIGH=0
 
-            for i in {1..10}; do
-                echo "=== Request $i ===" | tee -a "$SUMMARY_LOG"
-                if [ -s "$TEST_DIR/response_${i}.json" ]; then
-                    ts=$(grep "started at" "$TEST_DIR/request_${i}_log.txt" | awk '{print $5}')
-                    echo "Timestamp: $ts" | tee -a "$SUMMARY_LOG"
+#             for i in {1..10}; do
+#                 echo "=== Request $i ===" | tee -a "$SUMMARY_LOG"
+#                 if [ -s "$TEST_DIR/response_${i}.json" ]; then
+#                     ts=$(grep "started at" "$TEST_DIR/request_${i}_log.txt" | awk '{print $5}')
+#                     echo "Timestamp: $ts" | tee -a "$SUMMARY_LOG"
                     
-                    if grep -q "HTTP_CODE:200" "$TEST_DIR/request_${i}_log.txt"; then
-                        echo "✓ Request $i successful" | tee -a "$SUMMARY_LOG"
-                        SUCCESS_COUNT=$((SUCCESS_COUNT+1))
-                    else
-                        echo "✗ Request $i failed" | tee -a "$SUMMARY_LOG"
-                    fi
+#                     if grep -q "HTTP_CODE:200" "$TEST_DIR/request_${i}_log.txt"; then
+#                         echo "✓ Request $i successful" | tee -a "$SUMMARY_LOG"
+#                         SUCCESS_COUNT=$((SUCCESS_COUNT+1))
+#                     else
+#                         echo "✗ Request $i failed" | tee -a "$SUMMARY_LOG"
+#                     fi
                     
-                    # print response
-                    cat "$TEST_DIR/response_${i}.json" | tee -a "$SUMMARY_LOG"
+#                     # print response
+#                     cat "$TEST_DIR/response_${i}.json" | tee -a "$SUMMARY_LOG"
 
-                    # count model types
-                    if grep -q '"model":"llama-3-1b-low"' "$TEST_DIR/response_${i}.json"; then
-                        COUNT_LOW=$((COUNT_LOW+1))
-                    elif grep -q '"model":"llama-3-3b-high"' "$TEST_DIR/response_${i}.json"; then
-                        COUNT_HIGH=$((COUNT_HIGH+1))
-                    fi
+#                     # count model types
+#                     if grep -q '"model":"llama-3-1b-low"' "$TEST_DIR/response_${i}.json"; then
+#                         COUNT_LOW=$((COUNT_LOW+1))
+#                     elif grep -q '"model":"llama-3-3b-high"' "$TEST_DIR/response_${i}.json"; then
+#                         COUNT_HIGH=$((COUNT_HIGH+1))
+#                     fi
 
-                    # print http + timing info
-                    tail -n 2 "$TEST_DIR/request_${i}_log.txt" | tee -a "$SUMMARY_LOG"
-                else
-                    echo "Timestamp: $(date +%H:%M:%S.%3N)" | tee -a "$SUMMARY_LOG"
-                    echo "✗ Request $i failed (see error log)" | tee -a "$SUMMARY_LOG"
-                    cat "$TEST_DIR/request_${i}_error.log" | tee -a "$SUMMARY_LOG"
-                fi
+#                     # print http + timing info
+#                     tail -n 2 "$TEST_DIR/request_${i}_log.txt" | tee -a "$SUMMARY_LOG"
+#                 else
+#                     echo "Timestamp: $(date +%H:%M:%S.%3N)" | tee -a "$SUMMARY_LOG"
+#                     echo "✗ Request $i failed (see error log)" | tee -a "$SUMMARY_LOG"
+#                     cat "$TEST_DIR/request_${i}_error.log" | tee -a "$SUMMARY_LOG"
+#                 fi
 
-                echo -e "\n---\n" | tee -a "$SUMMARY_LOG"
-            done
+#                 echo -e "\n---\n" | tee -a "$SUMMARY_LOG"
+#             done
 
-            echo "Concurrent test completed at $(date)" | tee -a "$SUMMARY_LOG"
-            echo "Successful requests: $SUCCESS_COUNT out of 10" | tee -a "$SUMMARY_LOG"
-            echo "Model counts:" | tee -a "$SUMMARY_LOG"
-            echo "  llama-3-1b-low:  $COUNT_LOW" | tee -a "$SUMMARY_LOG"
-            echo "  llama-3-3b-high: $COUNT_HIGH" | tee -a "$SUMMARY_LOG"
+#             echo "Concurrent test completed at $(date)" | tee -a "$SUMMARY_LOG"
+#             echo "Successful requests: $SUCCESS_COUNT out of 10" | tee -a "$SUMMARY_LOG"
+#             echo "Model counts:" | tee -a "$SUMMARY_LOG"
+#             echo "  llama-3-1b-low:  $COUNT_LOW" | tee -a "$SUMMARY_LOG"
+#             echo "  llama-3-3b-high: $COUNT_HIGH" | tee -a "$SUMMARY_LOG"
 
-            # Ratio
-            if [ $COUNT_LOW -gt 0 ]; then
-                RATIO=$(echo "scale=2; $COUNT_HIGH / $COUNT_LOW" | bc)
-                echo "High:Low ratio = $COUNT_HIGH:$COUNT_LOW (~$RATIO)" | tee -a "$SUMMARY_LOG"
-            else
-                echo "High:Low ratio = N/A (no low responses)" | tee -a "$SUMMARY_LOG"
-            fi
+#             # Ratio
+#             if [ $COUNT_LOW -gt 0 ]; then
+#                 RATIO=$(echo "scale=2; $COUNT_HIGH / $COUNT_LOW" | bc)
+#                 echo "High:Low ratio = $COUNT_HIGH:$COUNT_LOW (~$RATIO)" | tee -a "$SUMMARY_LOG"
+#             else
+#                 echo "High:Low ratio = N/A (no low responses)" | tee -a "$SUMMARY_LOG"
+#             fi
 
-            echo
-            echo "Summary log saved at: $SUMMARY_LOG"
+#             echo
+#             echo "Summary log saved at: $SUMMARY_LOG"
 
-      - name: Collect pods' Health (Post-Concurrent Test)
-        run: |
-            #!/bin/bash
-            set -euo pipefail
+#       - name: Collect pods' Health (Post-Concurrent Test)
+#         run: |
+#             #!/bin/bash
+#             set -euo pipefail
 
-            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-            POD_LOG_FILE="logs/pod-check-3-Post-Concurrent.md"
+#             TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+#             POD_LOG_FILE="logs/pod-check-3-Post-Concurrent.md"
 
-            # Create pod health check report
-            {
-            echo "# Pod Health Check Report 2 (Post-Concurrent Test)"
-            echo "**Generated at:** $(date -u)"
-            echo "**Timestamp:** ${TIMESTAMP}"
-            echo ""
+#             # Create pod health check report
+#             {
+#             echo "# Pod Health Check Report 2 (Post-Concurrent Test)"
+#             echo "**Generated at:** $(date -u)"
+#             echo "**Timestamp:** ${TIMESTAMP}"
+#             echo ""
 
-            # List all pods
-            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+#             # List all pods
+#             PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
 
-            for POD in $PODS; do
-                NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
-                STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
-                READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
-                RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
+#             for POD in $PODS; do
+#                 NS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.metadata.namespace}')
+#                 STATUS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{.status.phase}')
+#                 READY=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.ready}{" "}{end}')
+#                 RESTARTS=$(sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}{.restartCount}{" "}{end}')
 
-                echo "## Pod: \`$POD\`"
-                echo "**Namespace:** $NS"
-                echo ""
-                echo "- **Status:** $STATUS"
-                echo "- **Containers Ready:** $READY"
-                echo "- **Restart Counts:** $RESTARTS"
+#                 echo "## Pod: \`$POD\`"
+#                 echo "**Namespace:** $NS"
+#                 echo ""
+#                 echo "- **Status:** $STATUS"
+#                 echo "- **Containers Ready:** $READY"
+#                 echo "- **Restart Counts:** $RESTARTS"
 
-                # Container statuses
-                echo "- **Container States:**"
-                sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
+#                 # Container statuses
+#                 echo "- **Container States:**"
+#                 sudo k3s kubectl get pod "$POD" -o jsonpath='{range .status.containerStatuses[*]}  - {.name}: {.state}{"\n"}{end}' | sed 's/map\[//;s/]//'
 
-                # Events (warnings only)
-                EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
-                if [[ -z "$EVENTS" ]]; then
-                echo "- **Events:** None"
-                else
-                echo "- **Events:**"
-                echo "$EVENTS"
-                fi
+#                 # Events (warnings only)
+#                 EVENTS=$(sudo k3s kubectl get events --field-selector involvedObject.name="$POD" -o json 2>/dev/null | jq -r '.items[] | select(.type=="Warning") | "  - " + .reason + ": " + .message')
+#                 if [[ -z "$EVENTS" ]]; then
+#                 echo "- **Events:** None"
+#                 else
+#                 echo "- **Events:**"
+#                 echo "$EVENTS"
+#                 fi
 
-                # Current resource usage (if metrics-server is available)
-                echo "- **Current Usage:**"
-                sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
+#                 # Current resource usage (if metrics-server is available)
+#                 echo "- **Current Usage:**"
+#                 sudo k3s kubectl top pod "$POD" --no-headers 2>/dev/null | awk '{print "  - CPU: " $2 ", Memory: " $3}' || echo "  - (metrics-server not available)"
                 
-                echo ""
-            done
+#                 echo ""
+#             done
 
-            } > "$POD_LOG_FILE"
+#             } > "$POD_LOG_FILE"
             
-            echo "Pod health check saved to $POD_LOG_FILE"
-            cat $POD_LOG_FILE
+#             echo "Pod health check saved to $POD_LOG_FILE"
+#             cat $POD_LOG_FILE
 
 
-      - name: Collect load-balancer Pod Logs (Post-Concurrent Test)
-        run: |
-            #!/bin/bash
+#       - name: Collect load-balancer Pod Logs (Post-Concurrent Test)
+#         run: |
+#             #!/bin/bash
 
-            # === Config ===
-            LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
-            LOG_FILE="logs/lb_pod_logs_combined.md"
+#             # === Config ===
+#             LB_POD=$(kubectl get pod -l app=load-balancer -o jsonpath='{.items[0].metadata.name}')
+#             LOG_FILE="logs/lb_pod_logs_combined.md"
 
-            # === Current timestamp ===
-            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+#             # === Current timestamp ===
+#             NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-            # === Determine last timestamp from file ===
-            if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
-                LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
-                RANGE_OPT="--since-time=$LAST_TS"
+#             # === Determine last timestamp from file ===
+#             if grep -q "^@@ LAST_TS=" "$LOG_FILE" 2>/dev/null; then
+#                 LAST_TS=$(tail -n 1 "$LOG_FILE" | sed 's/^@@ LAST_TS=//')
+#                 RANGE_OPT="--since-time=$LAST_TS"
 
-                # time diff
-                LAST_UNIX=$(date -d "$LAST_TS" +%s)
-                NOW_UNIX=$(date -d "$NOW" +%s)
-                DIFF=$((NOW_UNIX - LAST_UNIX))
-                DIFF_STR=" (after ${DIFF}s)"
+#                 # time diff
+#                 LAST_UNIX=$(date -d "$LAST_TS" +%s)
+#                 NOW_UNIX=$(date -d "$NOW" +%s)
+#                 DIFF=$((NOW_UNIX - LAST_UNIX))
+#                 DIFF_STR=" (after ${DIFF}s)"
 
-                # next index
-                INDEX=$(( $(grep -c "^=== Pod logs" "$LOG_FILE") + 1 ))
-            else
-                RANGE_OPT=""
-                DIFF_STR=""
-                INDEX=1
-            fi
+#                 # next index
+#                 INDEX=$(( $(grep -c "^=== Pod logs" "$LOG_FILE") + 1 ))
+#             else
+#                 RANGE_OPT=""
+#                 DIFF_STR=""
+#                 INDEX=1
+#             fi
 
-            # === Append marker ===
-            {
-                echo ""
-                echo "=== Pod logs (Post-Concurrent Test) $INDEX - $NOW$DIFF_STR ==="
-            } >> "$LOG_FILE"
+#             # === Append marker ===
+#             {
+#                 echo ""
+#                 echo "=== Pod logs (Post-Concurrent Test) $INDEX - $NOW$DIFF_STR ==="
+#             } >> "$LOG_FILE"
 
-            # === Append new logs ===
-            kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
+#             # === Append new logs ===
+#             kubectl logs "$LB_POD" --timestamps $RANGE_OPT >> "$LOG_FILE"
 
-            # === Save last timestamp marker inside same file ===
-            echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
+#             # === Save last timestamp marker inside same file ===
+#             echo "@@ LAST_TS=$NOW" >> "$LOG_FILE"
 
-            echo "Logs appended to: $LOG_FILE (entry $INDEX)"
+#             echo "Logs appended to: $LOG_FILE (entry $INDEX)"
 
-      - name: Generate Test Report
-        run: |
-            #!/bin/bash
-            set -euo pipefail
+#       - name: Generate Test Report
+#         run: |
+#             #!/bin/bash
+#             set -euo pipefail
             
-            TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-            REPORT_FILE="logs/final-summary-report.md"
+#             TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+#             REPORT_FILE="logs/final-summary-report.md"
             
-            echo "# Final Test Summary Report" > "$REPORT_FILE"
-            echo "**Generated at:** $(date -u)" >> "$REPORT_FILE"
-            echo "**Timestamp:** ${TIMESTAMP}" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
+#             echo "# Final Test Summary Report" > "$REPORT_FILE"
+#             echo "**Generated at:** $(date -u)" >> "$REPORT_FILE"
+#             echo "**Timestamp:** ${TIMESTAMP}" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
             
-            # =============================================
-            # SERVICES SUMMARY
-            # =============================================
-            echo "## Services Summary" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
+#             # =============================================
+#             # SERVICES SUMMARY
+#             # =============================================
+#             echo "## Services Summary" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
             
-            echo "### Service Endpoints" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            sudo k3s kubectl get endpoints -o json | jq -r '
-            .items[] |
-            "- **\(.metadata.name):** " +
-            ([
-                .subsets[]?.addresses[]?.ip
-            ] | join(", "))
-            ' >> "$REPORT_FILE"
+#             echo "### Service Endpoints" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
+#             sudo k3s kubectl get endpoints -o json | jq -r '
+#             .items[] |
+#             "- **\(.metadata.name):** " +
+#             ([
+#                 .subsets[]?.addresses[]?.ip
+#             ] | join(", "))
+#             ' >> "$REPORT_FILE"
             
-            echo "" >> "$REPORT_FILE"
-            echo "### Service List" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            echo "| Service | Type | Cluster IP | Port |" >> "$REPORT_FILE"
-            echo "|---------|------|------------|------|" >> "$REPORT_FILE"
-            sudo k3s kubectl get services --no-headers -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,PORT:.spec.ports[0].port | while read name type ip port; do
-                echo "| $name | $type | $ip | $port |" >> "$REPORT_FILE"
-            done
-            echo "" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
+#             echo "### Service List" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
+#             echo "| Service | Type | Cluster IP | Port |" >> "$REPORT_FILE"
+#             echo "|---------|------|------------|------|" >> "$REPORT_FILE"
+#             sudo k3s kubectl get services --no-headers -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,CLUSTER-IP:.spec.clusterIP,PORT:.spec.ports[0].port | while read name type ip port; do
+#                 echo "| $name | $type | $ip | $port |" >> "$REPORT_FILE"
+#             done
+#             echo "" >> "$REPORT_FILE"
             
-            # =============================================
-            # PODS STATE ANALYSIS
-            # =============================================
-            echo "## Pod State Analysis" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
+#             # =============================================
+#             # PODS STATE ANALYSIS
+#             # =============================================
+#             echo "## Pod State Analysis" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
             
-            # Get current pods
-            PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+#             # Get current pods
+#             PODS=$(sudo k3s kubectl get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
             
-            for POD in $PODS; do
-                echo "### Pod: \`$POD\`" >> "$REPORT_FILE"
-                echo "" >> "$REPORT_FILE"
+#             for POD in $PODS; do
+#                 echo "### Pod: \`$POD\`" >> "$REPORT_FILE"
+#                 echo "" >> "$REPORT_FILE"
                 
-                # Determine pod type
-                POD_TYPE="Unknown"
-                if [[ "$POD" == *"watcher"* ]]; then
-                    POD_TYPE="Service Watcher"
-                elif [[ "$POD" == *"load-balancer"* ]]; then
-                    POD_TYPE="Load Balancer"
-                elif [[ "$POD" == *"high"* ]]; then
-                    POD_TYPE="High-Cost LLaMA (3B)"
-                elif [[ "$POD" == *"low"* ]]; then
-                    POD_TYPE="Low-Cost LLaMA (1B)"
-                fi
+#                 # Determine pod type
+#                 POD_TYPE="Unknown"
+#                 if [[ "$POD" == *"watcher"* ]]; then
+#                     POD_TYPE="Service Watcher"
+#                 elif [[ "$POD" == *"load-balancer"* ]]; then
+#                     POD_TYPE="Load Balancer"
+#                 elif [[ "$POD" == *"high"* ]]; then
+#                     POD_TYPE="High-Cost LLaMA (3B)"
+#                 elif [[ "$POD" == *"low"* ]]; then
+#                     POD_TYPE="Low-Cost LLaMA (1B)"
+#                 fi
                 
-                echo "**Type:** $POD_TYPE" >> "$REPORT_FILE"
-                echo "" >> "$REPORT_FILE"
+#                 echo "**Type:** $POD_TYPE" >> "$REPORT_FILE"
+#                 echo "" >> "$REPORT_FILE"
                 
-                # Function to extract pod state from health check files
-                extract_pod_state() {
-                    local file="$1"
-                    local pod_name="$2"
+#                 # Function to extract pod state from health check files
+#                 extract_pod_state() {
+#                     local file="$1"
+#                     local pod_name="$2"
                     
-                    if [ -f "$file" ]; then
-                        # Extract status, ready, restarts for this pod
-                        local status=$(grep -A 10 "## Pod: \`$pod_name\`" "$file" | grep "Status:" | head -1 | cut -d: -f2 | xargs)
-                        local ready=$(grep -A 10 "## Pod: \`$pod_name\`" "$file" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs)
-                        local restarts=$(grep -A 10 "## Pod: \`$pod_name\`" "$file" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs)
-                        local events=$(grep -A 20 "## Pod: \`$pod_name\`" "$file" | grep -A 5 "Events:" | tail -n +2 | head -3 | grep -v "^$" | head -1)
+#                     if [ -f "$file" ]; then
+#                         # Extract status, ready, restarts for this pod
+#                         local status=$(grep -A 10 "## Pod: \`$pod_name\`" "$file" | grep "Status:" | head -1 | cut -d: -f2 | xargs)
+#                         local ready=$(grep -A 10 "## Pod: \`$pod_name\`" "$file" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs)
+#                         local restarts=$(grep -A 10 "## Pod: \`$pod_name\`" "$file" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs)
+#                         local events=$(grep -A 20 "## Pod: \`$pod_name\`" "$file" | grep -A 5 "Events:" | tail -n +2 | head -3 | grep -v "^$" | head -1)
                         
-                        echo "  - **Status:** ${status:-N/A}"
-                        echo "  - **Ready:** ${ready:-N/A}"
-                        echo "  - **Restarts:** ${restarts:-N/A}"
-                        if [[ "$events" == *"None"* ]] || [[ -z "$events" ]]; then
-                            echo "  - **Events:** None"
-                        else
-                            echo "  - **Events:** ${events:-None}"
-                        fi
-                    else
-                        echo "  - **Data:** Not available"
-                    fi
-                }
+#                         echo "  - **Status:** ${status:-N/A}"
+#                         echo "  - **Ready:** ${ready:-N/A}"
+#                         echo "  - **Restarts:** ${restarts:-N/A}"
+#                         if [[ "$events" == *"None"* ]] || [[ -z "$events" ]]; then
+#                             echo "  - **Events:** None"
+#                         else
+#                             echo "  - **Events:** ${events:-None}"
+#                         fi
+#                     else
+#                         echo "  - **Data:** Not available"
+#                     fi
+#                 }
                 
-                echo "| Test Phase | Status | Ready | Restarts |" >> "$REPORT_FILE"
-                echo "|------------|--------|-------|----------|" >> "$REPORT_FILE"
+#                 echo "| Test Phase | Status | Ready | Restarts |" >> "$REPORT_FILE"
+#                 echo "|------------|--------|-------|----------|" >> "$REPORT_FILE"
                 
-                # Pre-Sequential
-                echo -n "| Pre-Sequential | " >> "$REPORT_FILE"
-                if [ -f "logs/pod-check-1-Pre-Sequential.md" ]; then
-                    status=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-1-Pre-Sequential.md" | grep "Status:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    ready=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-1-Pre-Sequential.md" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    restarts=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-1-Pre-Sequential.md" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    echo "$status | $ready | $restarts |" >> "$REPORT_FILE"
-                else
-                    echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
-                fi
+#                 # Pre-Sequential
+#                 echo -n "| Pre-Sequential | " >> "$REPORT_FILE"
+#                 if [ -f "logs/pod-check-1-Pre-Sequential.md" ]; then
+#                     status=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-1-Pre-Sequential.md" | grep "Status:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     ready=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-1-Pre-Sequential.md" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     restarts=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-1-Pre-Sequential.md" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     echo "$status | $ready | $restarts |" >> "$REPORT_FILE"
+#                 else
+#                     echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
+#                 fi
                 
-                # Post-Sequential / Pre-Concurrent
-                echo -n "| Post-Sequential | " >> "$REPORT_FILE"
-                if [ -f "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" ]; then
-                    status=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" | grep "Status:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    ready=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    restarts=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    echo "$status | $ready | $restarts |" >> "$REPORT_FILE"
-                else
-                    echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
-                fi
+#                 # Post-Sequential / Pre-Concurrent
+#                 echo -n "| Post-Sequential | " >> "$REPORT_FILE"
+#                 if [ -f "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" ]; then
+#                     status=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" | grep "Status:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     ready=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     restarts=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-2-Post-Sequential-Pre-Concurrent.md" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     echo "$status | $ready | $restarts |" >> "$REPORT_FILE"
+#                 else
+#                     echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
+#                 fi
                 
-                # Post-Concurrent
-                echo -n "| Post-Concurrent | " >> "$REPORT_FILE"
-                if [ -f "logs/pod-check-3-Post-Concurrent.md" ]; then
-                    status=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-3-Post-Concurrent.md" | grep "Status:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    ready=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-3-Post-Concurrent.md" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    restarts=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-3-Post-Concurrent.md" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
-                    echo "$status | $ready | $restarts |" >> "$REPORT_FILE"
-                else
-                    echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
-                fi
+#                 # Post-Concurrent
+#                 echo -n "| Post-Concurrent | " >> "$REPORT_FILE"
+#                 if [ -f "logs/pod-check-3-Post-Concurrent.md" ]; then
+#                     status=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-3-Post-Concurrent.md" | grep "Status:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     ready=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-3-Post-Concurrent.md" | grep "Containers Ready:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     restarts=$(grep -A 10 "## Pod: \`$POD\`" "logs/pod-check-3-Post-Concurrent.md" | grep "Restart Counts:" | head -1 | cut -d: -f2 | xargs || echo "N/A")
+#                     echo "$status | $ready | $restarts |" >> "$REPORT_FILE"
+#                 else
+#                     echo "N/A | N/A | N/A |" >> "$REPORT_FILE"
+#                 fi
                 
-                echo "" >> "$REPORT_FILE"
-            done
+#                 echo "" >> "$REPORT_FILE"
+#             done
             
-            # =============================================
-            # TEST SUMMARIES
-            # =============================================
-            echo "## Test Results Summary" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
+#             # =============================================
+#             # TEST SUMMARIES
+#             # =============================================
+#             echo "## Test Results Summary" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
             
-            # Sequential Test Summary
-            echo "### Sequential Test Summary" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
+#             # Sequential Test Summary
+#             echo "### Sequential Test Summary" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
             
-            SEQ_LOG=$(ls logs/sequential_test_*.md 2>/dev/null | head -1)
-            if [ -f "$SEQ_LOG" ]; then
-                # Extract success count
-                SEQ_SUCCESS=$(grep "Successful requests:" "$SEQ_LOG" | grep -o "[0-9]\+ out of [0-9]\+" || echo "N/A")
+#             SEQ_LOG=$(ls logs/sequential_test_*.md 2>/dev/null | head -1)
+#             if [ -f "$SEQ_LOG" ]; then
+#                 # Extract success count
+#                 SEQ_SUCCESS=$(grep "Successful requests:" "$SEQ_LOG" | grep -o "[0-9]\+ out of [0-9]\+" || echo "N/A")
                 
-                # Extract model counts
-                SEQ_LOW=$(grep "llama-3-1b-low:" "$SEQ_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
-                SEQ_HIGH=$(grep "llama-3-3b-high:" "$SEQ_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
+#                 # Extract model counts
+#                 SEQ_LOW=$(grep "llama-3-1b-low:" "$SEQ_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
+#                 SEQ_HIGH=$(grep "llama-3-3b-high:" "$SEQ_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
                 
-                # Calculate average response time
-                SEQ_AVG_TIME=$(grep "TIME_TOTAL:" "$SEQ_LOG" | grep -o "[0-9]\+\.[0-9]\+" | awk '{sum+=$1; count++} END {if(count>0) printf "%.3f", sum/count; else print "N/A"}')
+#                 # Calculate average response time
+#                 SEQ_AVG_TIME=$(grep "TIME_TOTAL:" "$SEQ_LOG" | grep -o "[0-9]\+\.[0-9]\+" | awk '{sum+=$1; count++} END {if(count>0) printf "%.3f", sum/count; else print "N/A"}')
                 
-                echo "- **Success Rate:** $SEQ_SUCCESS" >> "$REPORT_FILE"
-                echo "- **High:Low Ratio:** ${SEQ_HIGH}:${SEQ_LOW}" >> "$REPORT_FILE"
-                echo "- **Average Response Time:** ${SEQ_AVG_TIME}s" >> "$REPORT_FILE"
-            else
-                echo "- **Data:** Sequential test log not found" >> "$REPORT_FILE"
-            fi
-            echo "" >> "$REPORT_FILE"
+#                 echo "- **Success Rate:** $SEQ_SUCCESS" >> "$REPORT_FILE"
+#                 echo "- **High:Low Ratio:** ${SEQ_HIGH}:${SEQ_LOW}" >> "$REPORT_FILE"
+#                 echo "- **Average Response Time:** ${SEQ_AVG_TIME}s" >> "$REPORT_FILE"
+#             else
+#                 echo "- **Data:** Sequential test log not found" >> "$REPORT_FILE"
+#             fi
+#             echo "" >> "$REPORT_FILE"
             
-            # Concurrent Test Summary
-            echo "### Concurrent Test Summary" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
+#             # Concurrent Test Summary
+#             echo "### Concurrent Test Summary" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
             
-            CONC_LOG=$(ls logs/load_test_small_*/summary-concurrent-test.log 2>/dev/null | head -1)
-            if [ -f "$CONC_LOG" ]; then
-                # Extract success count
-                CONC_SUCCESS=$(grep "Successful requests:" "$CONC_LOG" | grep -o "[0-9]\+ out of [0-9]\+" || echo "N/A")
+#             CONC_LOG=$(ls logs/load_test_small_*/summary-concurrent-test.log 2>/dev/null | head -1)
+#             if [ -f "$CONC_LOG" ]; then
+#                 # Extract success count
+#                 CONC_SUCCESS=$(grep "Successful requests:" "$CONC_LOG" | grep -o "[0-9]\+ out of [0-9]\+" || echo "N/A")
                 
-                # Extract model counts
-                CONC_LOW=$(grep "llama-3-1b-low:" "$CONC_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
-                CONC_HIGH=$(grep "llama-3-3b-high:" "$CONC_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
+#                 # Extract model counts
+#                 CONC_LOW=$(grep "llama-3-1b-low:" "$CONC_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
+#                 CONC_HIGH=$(grep "llama-3-3b-high:" "$CONC_LOG" | grep -o "[0-9]\+" | tail -1 || echo "0")
                 
-                # Calculate average response time from individual request logs
-                TEST_DIR=$(dirname "$CONC_LOG")
-                CONC_AVG_TIME=$(find "$TEST_DIR" -name "request_*_log.txt" -exec grep "Duration:" {} \; | grep -o "[0-9]\+\.[0-9]\+" | awk '{sum+=$1; count++} END {if(count>0) printf "%.3f", sum/count; else print "N/A"}')
+#                 # Calculate average response time from individual request logs
+#                 TEST_DIR=$(dirname "$CONC_LOG")
+#                 CONC_AVG_TIME=$(find "$TEST_DIR" -name "request_*_log.txt" -exec grep "Duration:" {} \; | grep -o "[0-9]\+\.[0-9]\+" | awk '{sum+=$1; count++} END {if(count>0) printf "%.3f", sum/count; else print "N/A"}')
                 
-                echo "- **Success Rate:** $CONC_SUCCESS" >> "$REPORT_FILE"
-                echo "- **High:Low Ratio:** ${CONC_HIGH}:${CONC_LOW}" >> "$REPORT_FILE"
-                echo "- **Average Response Time:** ${CONC_AVG_TIME}s" >> "$REPORT_FILE"
-            else
-                echo "- **Data:** Concurrent test log not found" >> "$REPORT_FILE"
-            fi
-            echo "" >> "$REPORT_FILE"
+#                 echo "- **Success Rate:** $CONC_SUCCESS" >> "$REPORT_FILE"
+#                 echo "- **High:Low Ratio:** ${CONC_HIGH}:${CONC_LOW}" >> "$REPORT_FILE"
+#                 echo "- **Average Response Time:** ${CONC_AVG_TIME}s" >> "$REPORT_FILE"
+#             else
+#                 echo "- **Data:** Concurrent test log not found" >> "$REPORT_FILE"
+#             fi
+#             echo "" >> "$REPORT_FILE"
             
-            # =============================================
-            # LOGS DIRECTORY STRUCTURE
-            # =============================================
-            echo "## Logs Directory Structure" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            echo "\`\`\`" >> "$REPORT_FILE"
-            echo "logs/" >> "$REPORT_FILE"
-            find logs -type f | sort | sed 's|^logs/|├── |' >> "$REPORT_FILE"
-            echo "\`\`\`" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
+#             # =============================================
+#             # LOGS DIRECTORY STRUCTURE
+#             # =============================================
+#             echo "## Logs Directory Structure" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
+#             echo "\`\`\`" >> "$REPORT_FILE"
+#             echo "logs/" >> "$REPORT_FILE"
+#             find logs -type f | sort | sed 's|^logs/|├── |' >> "$REPORT_FILE"
+#             echo "\`\`\`" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
             
-            echo "### Log File Sizes" >> "$REPORT_FILE"
-            echo "" >> "$REPORT_FILE"
-            echo "| File | Size |" >> "$REPORT_FILE"
-            echo "|------|------|" >> "$REPORT_FILE"
-            find logs -type f -exec du -h {} \; | sort | while read size file; do
-                filename=$(basename "$file")
-                echo "| $filename | $size |" >> "$REPORT_FILE"
-            done
+#             echo "### Log File Sizes" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
+#             echo "| File | Size |" >> "$REPORT_FILE"
+#             echo "|------|------|" >> "$REPORT_FILE"
+#             find logs -type f -exec du -h {} \; | sort | while read size file; do
+#                 filename=$(basename "$file")
+#                 echo "| $filename | $size |" >> "$REPORT_FILE"
+#             done
             
-            echo "" >> "$REPORT_FILE"
-            echo "---" >> "$REPORT_FILE"
-            echo "*Report generated automatically by CI pipeline*" >> "$REPORT_FILE"
+#             echo "" >> "$REPORT_FILE"
+#             echo "---" >> "$REPORT_FILE"
+#             echo "*Report generated automatically by CI pipeline*" >> "$REPORT_FILE"
             
-            echo "Final summary report generated: $REPORT_FILE"
-            echo ""
-            echo "Report Preview:"
-            head -20 "$REPORT_FILE"
-            echo "..."
-            echo "(Full report saved to logs/final-summary-report.md)"
+#             echo "Final summary report generated: $REPORT_FILE"
+#             echo ""
+#             echo "Report Preview:"
+#             head -20 "$REPORT_FILE"
+#             echo "..."
+#             echo "(Full report saved to logs/final-summary-report.md)"
 
-      - name: Upload logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-logs-${{ github.run_number }}-${{ github.run_attempt }}
-          path: logs/
-          retention-days: 7
+#       - name: Upload logs
+#         uses: actions/upload-artifact@v4
+#         if: always()
+#         with:
+#           name: test-logs-${{ github.run_number }}-${{ github.run_attempt }}
+#           path: logs/
+#           retention-days: 7
 
-      - name: Cleanup
-        if: always()
-        run: |
-          # Kill port-forward if it exists
-          if [ -f "/tmp/port_forward_pid" ]; then
-            PID=$(cat /tmp/port_forward_pid 2>/dev/null || echo "")
-            if [ -n "$PID" ]; then
-              sudo kill $PID 2>/dev/null || true
-              echo "Port-forward process (PID: $PID) killed"
-            fi
-            rm -f /tmp/port_forward_pid
-          fi
-          # Delete kubernetes resources
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml 2>/dev/null || true
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml 2>/dev/null || true
-          sudo k3s kubectl delete -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml 2>/dev/null || true
-
-
+#       - name: Cleanup
+#         if: always()
+#         run: |
+#           # Kill port-forward if it exists
+#           if [ -f "/tmp/port_forward_pid" ]; then
+#             PID=$(cat /tmp/port_forward_pid 2>/dev/null || echo "")
+#             if [ -n "$PID" ]; then
+#               sudo kill $PID 2>/dev/null || true
+#               echo "Port-forward process (PID: $PID) killed"
+#             fi
+#             rm -f /tmp/port_forward_pid
+#           fi
+#           # Delete kubernetes resources
+#           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/load-balancer.yaml 2>/dev/null || true
+#           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/load-balancer-llamaedge/yaml/default-services-gh.yaml 2>/dev/null || true
+#           sudo k3s kubectl delete -f $GITHUB_WORKSPACE/watcher/yaml/watcher.yaml 2>/dev/null || true
 
 
 
 
 
-# sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/load-balancer.yaml
-# sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/default-services.yaml
-# sudo k3s kubectl apply -f watcher/yaml/watcher.yaml
+
+
+# # sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/load-balancer.yaml
+# # sudo k3s kubectl apply -f load-balancer-llamaedge/yaml/default-services.yaml
+# # sudo k3s kubectl apply -f watcher/yaml/watcher.yaml
